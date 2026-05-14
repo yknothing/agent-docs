@@ -1,0 +1,14 @@
+{
+  "name": "agent-docs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agent docs repository with Feishu CLI integration",
+  "scripts": {
+    "feishu:install": "npx @larksuite/cli@latest install",
+    "feishu:config": "lark-cli config init --new",
+    "feishu:auth": "lark-cli auth login --recommend",
+    "feishu:status": "lark-cli auth status",
+    "feishu:check": "bash scripts/check-feishu-cli.sh",
+    "feishu:setup": "bash scripts/setup-feishu-cli.sh"
+  }
+}
