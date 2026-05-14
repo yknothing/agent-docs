@@ -16,4 +16,4 @@ npx @larksuite/cli@latest install
 
 echo "[INFO] 安装完成。若为首次接入请继续执行："
 echo "  lark-cli config init --new"
-echo "  lark-cli auth login --recommend"
+echo "  npm run feishu:auth"

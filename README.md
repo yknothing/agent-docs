@@ -25,6 +25,7 @@ npm run feishu:status
   - `setup-feishu-cli.sh`
   - `check-feishu-cli.sh`
   - `check-feishu-cli-auth.sh`
+  - `auth-feishu-cli.sh`
 - `.github/workflows/`：仓库内默认工作流（CI 仅做环境与文档可用性检查）
 
 ## 关联命令
@@ -35,6 +36,12 @@ npm run feishu:status
   - 执行 `lark-cli config init --new`
 - `npm run feishu:auth`
   - 执行 `lark-cli auth login --recommend`
+- `npm run feishu:auth:proxyless`
+  - 在强代理环境下执行鉴权（自动禁用 ALL_PROXY/HTTP(S)_PROXY）
+- `npm run feishu:auth:device`
+  - 执行 `lark-cli auth login --recommend --no-wait`
+- `npm run feishu:auth:device:proxyless`
+  - 在强代理环境下执行非阻塞鉴权，并返回授权流程信息
 - `npm run feishu:status`
   - 执行 `lark-cli auth status`
 - `npm run feishu:check`

@@ -12,6 +12,12 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 
 if command -v lark-cli >/dev/null 2>&1; then
+  if [ "${LARK_CLI_NO_PROXY:-0}" = "1" ]; then
+    echo "[INFO] 当前设置了 LARK_CLI_NO_PROXY=1，将不走代理检测 lark-cli 连接。"
+  fi
+fi
+
+if command -v lark-cli >/dev/null 2>&1; then
   if ! lark-cli --version >/dev/null 2>&1; then
     echo "[ERROR] 检测到 lark-cli，但执行失败。"
     exit 1

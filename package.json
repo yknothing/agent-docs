@@ -6,11 +6,15 @@
   "scripts": {
     "feishu:install": "npx @larksuite/cli@latest install",
     "feishu:config": "lark-cli config init --new",
-    "feishu:auth": "lark-cli auth login --recommend",
+    "feishu:auth": "bash scripts/auth-feishu-cli.sh",
+    "feishu:auth:proxyless": "LARK_CLI_NO_PROXY=1 ALL_PROXY= HTTPS_PROXY= HTTP_PROXY= NO_PROXY= bash scripts/auth-feishu-cli.sh --recommend",
+    "feishu:auth:device": "bash scripts/auth-feishu-cli.sh --recommend --no-wait",
+    "feishu:auth:device:proxyless": "LARK_CLI_NO_PROXY=1 ALL_PROXY= HTTPS_PROXY= HTTP_PROXY= NO_PROXY= bash scripts/auth-feishu-cli.sh --recommend --no-wait",
     "feishu:status": "lark-cli auth status",
     "feishu:check": "bash scripts/check-feishu-cli.sh",
     "feishu:check:auth": "bash scripts/check-feishu-cli-auth.sh",
     "feishu:check:full": "bash scripts/check-feishu-cli.sh && bash scripts/check-feishu-cli-auth.sh",
+    "feishu:doctor": "lark-cli doctor",
     "feishu:setup": "bash scripts/setup-feishu-cli.sh"
   }
 }

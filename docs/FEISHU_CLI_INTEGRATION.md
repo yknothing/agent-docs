@@ -43,6 +43,38 @@ npm run feishu:auth       # 登录（交互）
 npm run feishu:check:auth  # 校验授权
 ```
 
+## 4.1 授权失败排查（No permission）
+
+你遇到的报错：
+
+> No permission to access  
+> The current account aicafe (Feishu Personal User) doesn't have permission for 飞书 CLI.
+
+是账号权限问题，不是脚本本身问题。`aicafe` 是个人账号（Feishu Personal User），多数场景不具备 CLI 应用授权范围。
+
+处理步骤（按顺序执行）：
+
+1. 停掉当前登录态（防止继续复用错误账号）
+   ```bash
+   lark-cli auth logout
+   ```
+2. 用授权账号重登，禁用代理发起鉴权（避免 `ALL_PROXY` 把凭据走代理）
+   ```bash
+   npm run feishu:auth:device:proxyless
+   ```
+3. 按浏览器提示完成授权后，恢复并验证
+   ```bash
+   npm run feishu:check:full
+   ```
+4. 若仍失败，检查企业后台是否允许该账号接入飞书 CLI，并确认账号有企业身份或已加入目标租户。
+
+临时可用状态命令：
+
+```bash
+lark-cli auth list         # 查看当前会话中已登录账号
+lark-cli doctor            # 检查 CLI 配置与鉴权健康
+```
+
 ## 5. AI Assistant 模式（非阻塞授权）
 
 如果你要让 AI 侧先发起授权链接：
@@ -62,6 +94,10 @@ lark-cli auth login --recommend --no-wait
   - `lark-cli im +messages-send --chat-id "oc_xxx" --text "Hello"`
 - 查看授权状态
   - `lark-cli auth status`
+- 诊断登录状态
+  - `lark-cli auth list`
+- 健康检查
+  - `lark-cli doctor`
 
 ## 7. 安全边界
 
