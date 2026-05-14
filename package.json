@@ -9,6 +9,8 @@
     "feishu:auth": "lark-cli auth login --recommend",
     "feishu:status": "lark-cli auth status",
     "feishu:check": "bash scripts/check-feishu-cli.sh",
+    "feishu:check:auth": "bash scripts/check-feishu-cli-auth.sh",
+    "feishu:check:full": "bash scripts/check-feishu-cli.sh && bash scripts/check-feishu-cli-auth.sh",
     "feishu:setup": "bash scripts/setup-feishu-cli.sh"
   }
 }

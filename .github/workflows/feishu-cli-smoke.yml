@@ -1,6 +1,12 @@
 name: Feishu CLI Smoke
 
 on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -8,8 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check required scripts exist
+
+      - name: Check scripts and docs
         run: |
-          test -x scripts/check-feishu-cli.sh
-          test -f docs/FEISHU_CLI_INTEGRATION.md
-          test -f package.json
+          npm run feishu:check
