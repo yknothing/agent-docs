@@ -26,19 +26,19 @@ npm run feishu:status
   - `platform.claude.com` 文档
   - `code.claude.com/docs`（Claude Code）
   - Anthropic 官网技术博客/文章（来自 sitemap）
-- 中文优先：先尝试 `/zh-CN/`，再尝试 `/zh/`，无中文时自动写入英文并可触发翻译
+- 中文优先：先尝试 `/zh-CN/`，再尝试 `/zh/`，无中文时触发翻译；若未配置翻译器，QA 会阻断中文缺失
 - 保留原始结构：markdown 表头、列表、链接、图片占位一并落地
 - 图片本地化：下载图片到 `media/` 并在正文中引用本地路径
 - 分批：按 `batch_size` 生成 `batch-xxx` 目录和 `batch_manifest.json`
-- QA：校验抓取结果文件、标题与链接/图片计数变化
-- 可选飞书同步：生成可执行命令并支持 dry-run
+- QA：校验抓取结果文件、正文非空、翻译语言、表格/标题/链接/图片计数与图片本地化
+- 可选飞书同步：生成可执行命令并支持 dry-run；默认只有 QA PASS 才允许同步
 
 ### 重要环境变量
 
 - `LANGCRAFT_CMD`：可选，若设置则用于命令行翻译；例如：
   - `export LANGCRAFT_CMD='node path/to/langcraft-cli --translate --from en --to zh --markdown'`
 - `OPENAI_API_KEY`：未配置 `LANGCRAFT_CMD` 时，可走 OpenAI 翻译（默认）
-- `FEISHU_DOC_FOLDER_TOKEN`：飞书目录 token，`--sync-feishu` 时必须
+- `FEISHU_DOC_FOLDER_TOKEN`：飞书目录 token，`--sync-feishu --execute-feishu` 时必须；dry-run 可生成占位命令
 
 ### 常用命令
 
@@ -49,32 +49,34 @@ npm run anthropic:discover
 # 2) 小规模验证（5 条，跳过 QA，关闭翻译）
 npm run anthropic:crawl:smoke
 
-# 3) 全量抓取（默认分批）
+# 3) 全量抓取（默认分批；任一批 QA FAIL 时命令退出非 0）
 npm run anthropic:crawl
 
 # 4) 全量抓取并自动提交（QA 通过才提交；支持 --force-commit 覆盖）
 npm run anthropic:commit
 
-# 5) 飞书同步 dry-run（只生成命令稿）
+# 5) 飞书同步 dry-run（只生成命令稿；状态为 DRY_RUN，不代表已上传）
 npm run anthropic:sync-dryrun
 
-# 6) 飞书同步执行（依赖 lark-cli 与 token）
+# 6) 飞书同步执行（依赖 lark-cli、token，且默认要求 QA PASS）
 npm run anthropic:sync
 ```
 
 ### 多批次与 QA 政策
 
 - 全量抓取默认会按 `batch_size` 进行分批。
+- 默认不复用已有 `batch-*` 输出目录，避免旧产物混入；需要断点续跑时显式传 `--resume-output`。
 - 每个 batch 会生成：
   - `batch_manifest.json`（本批元数据、QA、可选飞书同步结果）
   - `batch_qa_report.json`（QA 详情，提交阻断依据）
-  - `feishu_sync_commands.sh`（可复现的同步命令文件）
+  - `feishu_sync_commands.sh`（可复现的同步命令文件；dry-run 生成，execute 才实际上传）
 - 建议执行流：
   - 先跑 `anthropic:discover`（确认范围）
   - 再跑 `anthropic:crawl:smoke`（验证流程）
   - 再跑 `anthropic:crawl`
   - 检查 `batch_qa_report.json`，通过后再 `anthropic:commit`
   - 通过后再 `anthropic:sync-dryrun` / `anthropic:sync`
+  - 只有明确接受风险时才使用 `--force-sync` 或 `--allow-failures`
 
 ### 产物结构
 
