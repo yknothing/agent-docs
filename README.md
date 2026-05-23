@@ -1,6 +1,28 @@
 # agent-docs
 
-本仓库用于接入飞书 CLI（lark-cli），先做最小闭环：可复用脚本、配置说明与鉴权检查。
+多厂商 AI/Agent 技术资料库基础设施：以 **Agent Skills + Workflow** 为核心控制流程，以确定性 tools 承担抓取、格式处理、图片本地化、QA、CLI 封装、hooks 与自动化测试。
+
+当前 Stage 1 聚焦开发资料源材料的高质量收集与完善；Feishu 同步是资料 PASS 后的可选分发支线，后续再规划跨厂商 taxonomy、学习路径、深度分析与商品化。
+
+| 厂商库 | 飞书根 | 状态 |
+|--------|--------|------|
+| Anthropic | `anthropic-docs/` | **active**（`scripts/anthropic_content_pipeline.py`） |
+| OpenAI | `openai-docs/` | reserved |
+| Gemini | `gemini-docs/` | reserved |
+| Cursor | `cursor-docs/` | reserved |
+
+飞书云盘完整路径：`agent-docs/{vendor}-docs/{Vendor}/…`。`FEISHU_DOC_FOLDER_TOKEN` 必须指向名为 **`agent-docs`** 的文件夹（勿用 `agent-docs-e2e-real` 等临时名作生产根）。详见 [AGENTS.md](./AGENTS.md) 与 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+
+## Agent 文档
+
+面向 AI Agent 的仓库指南（建议优先阅读）：
+
+| 文档 | 用途 |
+|------|------|
+| [AGENTS.md](./AGENTS.md) | Agent 入口：任务路由、约束、命令速查 |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | 系统结构、流水线、QA 与产物 |
+| [DEBUG.md](./DEBUG.md) | 分场景排障与验证清单 |
+| [EXPERIENCE.md](./EXPERIENCE.md) | 踩坑与决策记录（可追加） |
 
 ## 快速开始
 
@@ -38,7 +60,8 @@ npm run feishu:status
 - `LANGCRAFT_CMD`：可选，若设置则用于命令行翻译；例如：
   - `export LANGCRAFT_CMD='node path/to/langcraft-cli --translate --from en --to zh --markdown'`
 - `OPENAI_API_KEY`：未配置 `LANGCRAFT_CMD` 时，可走 OpenAI 翻译（默认）
-- `FEISHU_DOC_FOLDER_TOKEN`：飞书目录 token，`--sync-feishu --execute-feishu` 时必须；dry-run 可生成占位命令
+- `FEISHU_DOC_FOLDER_TOKEN`：指向云盘文件夹 **`agent-docs`** 的 token（`--sync-feishu --execute-feishu` 时必须；dry-run 可生成占位命令）
+- `FEISHU_DOC_ROOT_MODE`：默认 `agent-docs-folder`；token 为 `agent-docs` 父目录时设 `parent`
 
 ### 常用命令
 
@@ -97,6 +120,7 @@ batch-001/
 
 ## 目录
 
+- `AGENTS.md` / `ARCHITECTURE.md` / `DEBUG.md` / `EXPERIENCE.md`：Agent 工作文档
 - `docs/FEISHU_CLI_INTEGRATION.md`：接入说明（含 AI Assistant 模式步骤）
 - `scripts/`：用于安装与接入的脚本
   - `setup-feishu-cli.sh`
