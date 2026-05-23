@@ -1,6 +1,58 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import sys
+from pathlib import Path as _Path
+
+_REPO_ROOT = _Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from agent_docs.core.config import (  # noqa: E402
+    AGENT_DOCS_ROOT,
+    ALLOWED_DOC_HOSTS,
+    ALLOWED_SITEMAP_PREFIXES,
+    CODE_DOCS_URL,
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_IMAGE_FETCH_TIMEOUT,
+    DEFAULT_OUTPUT_ROOT,
+    DEFAULT_TRANSLATE_TIMEOUT,
+    DEFAULT_VENDOR,
+    FEISHU_DOC_LOCALE_PREFIXES,
+    FEISHU_EXCLUDED_URL_PATHS,
+    FEISHU_FOLDER_CACHE_NAME,
+    FEISHU_FOLDER_INDEX_NAME,
+    FEISHU_INDEX_CACHE_NAME,
+    FEISHU_INDEX_DOC_TITLE,
+    FEISHU_VERIFY_MIN_CONTENT_LEN,
+    IMAGE_EXTS,
+    NEWS_HOSTS,
+    PLATFORM_DOCS_URL,
+    SITEMAP_URL,
+    UA,
+    DEFAULT_CHARSET,
+    DEFAULT_SYNC_TIMEOUT,
+    FEISHU_ALT_TEXT_MIN_LEN,
+    FEISHU_ALT_TEXT_HINT_MAX_LEN,
+    FEISHU_ERROR_SNIPPET_MAX_LEN,
+    FEISHU_FOLDER_TOKEN_HASH_LEN,
+    FEISHU_MEDIA_CAPTION_MAX_LEN,
+    QA_STATUS_SKIPPED,
+)
+from agent_docs.core.logging import PipelineLogger  # noqa: E402
+from agent_docs.vendors.registry import (  # noqa: E402
+    VENDOR_LIBRARIES,
+    feishu_brand_root,
+    feishu_library_root,
+)
+from agent_docs.ingest import (
+    build_targets,
+    parse_frontmatter,
+    process_target,
+    safe_slug,
+)
+from agent_docs.qa import run_qa
+
 import argparse
 import datetime
 import hashlib
@@ -16,878 +68,19 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
-
-
-UA = "Mozilla/5.0 (compatible; AnthropicContentPipeline/1.0)"
-DEFAULT_BATCH_SIZE = 20
-DEFAULT_TRANSLATE_TIMEOUT = 120
-DEFAULT_OUTPUT_ROOT = "artifacts/anthropic-content"
-
-
-ALLOWED_SITEMAP_PREFIXES = {
-    "news",
-    "research",
-    "engineering",
-    "learn",
-    "economic-futures",
-    "system-cards",
-}
-
-PLATFORM_DOCS_URL = "https://platform.claude.com/llms.txt"
-CODE_DOCS_URL = "https://code.claude.com/docs/llms.txt"
-SITEMAP_URL = "https://www.anthropic.com/sitemap.xml"
-
-IMAGE_EXTS = {
-    ".avif",
-    ".bmp",
-    ".gif",
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".svg",
-    ".webp",
-}
-
-
-ALLOWED_DOC_HOSTS = {
-    "platform.claude.com",
-    "code.claude.com",
-}
-
-NEWS_HOSTS = {
-    "www.anthropic.com",
-    "anthropic.com",
-}
-
-
-def normalize_url_path(url: str) -> Optional[str]:
-    if not url:
-        return None
-    p = urllib.parse.urlparse(url)
-    if p.scheme not in {"http", "https"}:
-        return None
-    normalized = p._replace(fragment="", query="")
-    normalized = normalized._replace(path=re.sub(r"/+$", "", normalized.path))
-    return urllib.parse.urlunparse(normalized)
-
-
-def normalize_link(raw_url: str) -> Optional[str]:
-    if not raw_url:
-        return None
-    cleaned = raw_url.strip().strip("()<>`\"'")
-    if not cleaned:
-        return None
-    parsed = urllib.parse.urlparse(cleaned)
-    if parsed.scheme and parsed.scheme.lower() not in {"http", "https"}:
-        return None
-    if not parsed.netloc and cleaned.startswith("/"):
-        return None
-    if not parsed.scheme:
-        return None
-    if parsed.path in {"", "/"}:
-        return None
-    if parsed.netloc.lower() not in ALLOWED_DOC_HOSTS:
-        return None
-    if parsed.netloc in ALLOWED_DOC_HOSTS and "/docs/" not in parsed.path:
-        return None
-    return normalize_url_path(cleaned)
-
-
-def safe_slug(url: str, max_len: int = 120) -> str:
-    p = urllib.parse.urlparse(url)
-    slug = p.path.strip("/").replace("/", "__")
-    if not slug:
-        slug = "index"
-    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", slug)
-    if len(slug) > max_len:
-        suffix = hashlib.sha1(url.encode("utf-8")).hexdigest()[:8]
-        slug = f"{slug[: max_len - 9]}_{suffix}"
-    return slug
-
-
-def normalize_url(base: str, url: str) -> str:
-    if not url:
-        return url
-    if url.startswith("http://") or url.startswith("https://"):
-        return url
-    if url.startswith("//"):
-        return f"https:{url}"
-    return urllib.parse.urljoin(base, url)
-
-
-def has_chinese(text: str) -> bool:
-    count = len(re.findall(r"[\u4e00-\u9fff]", text))
-    return text and count / max(1, len(text)) > 0.005
-
-
-def chinese_ratio(text: str) -> float:
-    if not text:
-        return 0.0
-    count = len(re.findall(r"[\u4e00-\u9fff]", text))
-    return count / max(1, len(text))
-
-
-def strip_frontmatter(markdown_text: str) -> str:
-    if not markdown_text.startswith("---"):
-        return markdown_text
-    parts = markdown_text.split("---", 2)
-    if len(parts) == 3:
-        return parts[2].strip()
-    return markdown_text
-
-
-def visible_content_len(markdown_text: str) -> int:
-    body = strip_frontmatter(markdown_text)
-    body = re.sub(r"```[\s\S]*?```", "", body)
-    body = re.sub(r"<[^>]+>", "", body)
-    body = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", body)
-    body = re.sub(r"\[[^\]]*\]\([^)]+\)", "", body)
-    body = re.sub(r"[\s#|:`*_>-]+", "", body)
-    return len(body)
-
-
-def is_not_found_text(text: str, title: Optional[str] = None) -> bool:
-    if not text:
-        return True
-    if title is None:
-        title = extract_title(text)
-    if not title:
-        return False
-    lower = title.lower()
-    return "not found" in lower or "404" in lower
-
-
-def looks_markdown(url: str, content_type: str, text: str) -> bool:
-    ct = content_type.lower()
-    if "text/markdown" in ct or url.endswith(".md"):
-        return True
-    if text.lstrip().startswith("<HomePage") and url.endswith(".md"):
-        return True
-    return False
-
-
-def parse_charset(content_type: str) -> str:
-    if not content_type:
-        return "utf-8"
-    m = re.search(r"charset=([A-Za-z0-9_-]+)", content_type, flags=re.IGNORECASE)
-    if not m:
-        if "text/" in content_type:
-            return "utf-8"
-        return "utf-8"
-    return m.group(1)
-
-
-def http_get(url: str, timeout: int = 30) -> Tuple[int, str, str]:
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        try:
-            body = resp.read()
-        except http.client.IncompleteRead as e:
-            body = e.partial
-        ctype = resp.headers.get("Content-Type", "")
-        charset = parse_charset(ctype)
-        text = body.decode(charset, errors="replace")
-        return resp.status, ctype, text
-
-
-def http_get_bytes(url: str, timeout: int = 30) -> Tuple[int, str, bytes]:
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        try:
-            data = resp.read()
-        except http.client.IncompleteRead as e:
-            data = e.partial
-        ctype = resp.headers.get("Content-Type", "")
-        return resp.status, ctype, data
-
-
-def fetch_url(url: str, timeout: int = 30) -> Tuple[Optional[str], Optional[str]]:
-    if not url:
-        return None, None
-    for attempt in range(3):
-        try:
-            status, content_type, text = http_get(url, timeout=timeout)
-            break
-        except urllib.error.HTTPError as e:
-            if e.code in (301, 302, 303, 307, 308):
-                location = e.headers.get("Location")
-                if location:
-                    return fetch_url(urllib.parse.urljoin(url, location), timeout=timeout)
-            if e.code and 400 <= e.code < 500:
-                return None, None
-            if attempt == 2:
-                return None, None
-            time.sleep(1 + attempt)
-        except Exception:
-            if attempt == 2:
-                return None, None
-            time.sleep(1 + attempt)
-    if status != 200:
-        return None, None
-    if content_type:
-        return text, content_type
-    return text, "text/plain"
-
-
-def fetch_bytes(url: str, timeout: int = 30) -> Tuple[Optional[bytes], Optional[str]]:
-    if not url:
-        return None, None
-    for attempt in range(3):
-        try:
-            status, content_type, data = http_get_bytes(url, timeout=timeout)
-            break
-        except urllib.error.HTTPError as e:
-            if e.code in (301, 302, 303, 307, 308):
-                location = e.headers.get("Location")
-                if location:
-                    return fetch_bytes(urllib.parse.urljoin(url, location), timeout=timeout)
-            if e.code and 400 <= e.code < 500:
-                return None, None
-            if attempt == 2:
-                return None, None
-            time.sleep(1 + attempt)
-        except Exception:
-            if attempt == 2:
-                return None, None
-            time.sleep(1 + attempt)
-    if status != 200:
-        return None, None
-    return data, content_type
-
-
-def extract_links_from_llms(url: str) -> List[str]:
-    text, _ = fetch_url(url) if url else (None, None)
-    if not text:
-        return []
-    links = set()
-    links.update(re.findall(r"https?://[^\s\)\]]+", text))
-    links.update(re.findall(r"\[[^\]]*?\]\((https?://[^\)\s]+)\)", text))
-    cleaned = []
-    seen = set()
-    for link in links:
-        normalized = normalize_link(link)
-        if not normalized:
-            continue
-        p = urllib.parse.urlparse(normalized)
-        if p.path in {"", "/"}:
-            continue
-        if p.netloc in ALLOWED_DOC_HOSTS and "/docs/" not in p.path:
-            continue
-        if normalized in seen:
-            continue
-        seen.add(normalized)
-        cleaned.append(normalized)
-    return cleaned
-
-
-def discover_news_urls(
-    sitemap_url: str = SITEMAP_URL,
-    allowed_prefixes: Optional[Sequence[str]] = None,
-) -> List[str]:
-    if allowed_prefixes is None:
-        allowed_prefixes = sorted(ALLOWED_SITEMAP_PREFIXES)
-    text, _ = fetch_url(sitemap_url)
-    if not text:
-        return []
-    raw_urls = re.findall(r"<loc>(.*?)</loc>", text)
-    out: List[str] = []
-    allowed = {str(prefix).strip("/").lower() for prefix in allowed_prefixes if str(prefix).strip("/")}
-    for u in raw_urls:
-        u = u.strip()
-        p = urllib.parse.urlparse(u)
-        if p.scheme not in {"http", "https"}:
-            continue
-        if p.netloc.lower() not in NEWS_HOSTS:
-            continue
-        segs = [s for s in p.path.strip("/").split("/") if s]
-        if not segs:
-            continue
-        first = segs[0].lower()
-        if first in allowed:
-            out.append(urllib.parse.urlunparse((
-                p.scheme.lower(),
-                p.netloc.lower(),
-                re.sub(r"/+$", "", p.path),
-                "",
-                "",
-                "",
-            )))
-    return sorted(set(out))
-
-
-def extract_main_article_html(html: str) -> str:
-    m = re.search(r"<article[\s\S]*?</article>", html, re.IGNORECASE)
-    if m:
-        return m.group(0)
-    m = re.search(r"<main[\s\S]*?</main>", html, re.IGNORECASE)
-    if m:
-        return m.group(0)
-    return html
-
-
-def html_to_markdown(html: str) -> str:
-    if not html:
-        return ""
-    if shutil.which("html2text") is None:
-        text = re.sub(r"<script[\s\S]*?</script>", "", html, flags=re.IGNORECASE)
-        text = re.sub(r"<style[\s\S]*?</style>", "", text, flags=re.IGNORECASE)
-        text = re.sub(r"</(p|div|h\d|li|tr)>", "\n", text, flags=re.IGNORECASE)
-        text = re.sub(r"<[^>]+>", "", text)
-        text = text.replace("&nbsp;", " ").replace("&amp;", "&")
-        return re.sub(r"\n{3,}", "\n\n", text).strip()
-    proc = subprocess.run(
-        ["html2text", "--pd", "--unicode-snob", "--no-wrap-links", "--images-as-html", "--skip-internal-links"],
-        input=html,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return ""
-    return proc.stdout.strip()
-
-
-def extract_title_from_markdown(markdown_text: str) -> str:
-    for line in markdown_text.splitlines()[:40]:
-        m = re.match(r"^#\s+(\S.*)$", line.strip())
-        if m:
-            return re.sub(r"\s+", " ", m.group(1)).strip()
-    return ""
-
-
-def extract_title(html_or_markdown: str) -> str:
-    m = re.search(r"<title>(.*?)</title>", html_or_markdown, re.IGNORECASE | re.DOTALL)
-    if m:
-        return re.sub(r"\s+", " ", m.group(1)).strip()
-    return extract_title_from_markdown(html_or_markdown)
-
-
-def count_tables(markdown_text: str) -> int:
-    lines = markdown_text.splitlines()
-    count = 0
-    i = 0
-    while i < len(lines) - 1:
-        l1 = lines[i].strip()
-        l2 = lines[i + 1].strip()
-        if re.match(r"^\|.*\|$", l1) and re.match(r"^\|[\s\-\:\|]+$", l2):
-            count += 1
-            i += 2
-            while i < len(lines) and lines[i].strip().startswith("|"):
-                i += 1
-        else:
-            i += 1
-    return count
-
-
-def count_headings(markdown_text: str) -> int:
-    return sum(1 for line in markdown_text.splitlines() if re.match(r"^#{1,6}\s+", line.strip()))
-
-
-def count_links(markdown_text: str) -> int:
-    total = len(re.findall(r"\[[^\]]*\]\([^)]+\)", markdown_text))
-    total += len(re.findall(r"<a[^>]+href=[\"'][^\"']+[\"'][^>]*>", markdown_text, flags=re.IGNORECASE))
-    return total
-
-
-def extract_images(markdown_text: str, base_url: str) -> List[Tuple[str, str]]:
-    urls: List[Tuple[str, str]] = []
-    seen = set()
-    for m in re.finditer(r"!\[[^\]]*\]\(([^)]+)\)", markdown_text):
-        src = normalize_url(base_url, m.group(1).strip())
-        if src not in seen:
-            seen.add(src)
-        urls.append((src, m.group(0)))
-    for m in re.finditer(r"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>", markdown_text, re.IGNORECASE):
-        src = normalize_url(base_url, m.group(1).strip())
-        if src not in seen:
-            seen.add(src)
-        urls.append((src, m.group(0)))
-    # keep deterministic and dedup by URL
-    dedup: List[Tuple[str, str]] = []
-    seen = set()
-    for src, marker in urls:
-        if src in seen:
-            continue
-        seen.add(src)
-        dedup.append((src, marker))
-    return dedup
-
-
-def infer_image_ext(content_type: str, source_url: str) -> str:
-    if source_url:
-        ext = Path(urllib.parse.urlparse(source_url).path).suffix.lower()
-        if ext in IMAGE_EXTS:
-            return ext
-    if content_type:
-        if "image/" in content_type:
-            cext = content_type.split(";", 1)[0].rsplit("/", 1)[-1].strip()
-            if cext and f".{cext}" in IMAGE_EXTS:
-                return f".{cext}"
-        if "svg" in content_type:
-            return ".svg"
-    return ".bin"
-
-
-def download_images(image_refs: List[Tuple[str, str]], out_dir: Path) -> List[Dict[str, str]]:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    records: List[Dict[str, str]] = []
-    for src, original in image_refs:
-        if not src or src.startswith("data:") or src.startswith("mailto:"):
-            records.append({"source": src, "file": "", "status": "skip-unsupported"})
-            continue
-        data, ctype = fetch_bytes(src, timeout=30)
-        if not data:
-            records.append({"source": src, "file": "", "status": "failed-fetch"})
-            continue
-        sha = hashlib.sha1((src + original).encode("utf-8")).hexdigest()[:12]
-        ext = infer_image_ext(ctype or "", src)
-        out_file = out_dir / f"{sha}{ext}"
-        out_file.parent.mkdir(parents=True, exist_ok=True)
-        if not out_file.exists():
-            out_file.write_bytes(data)
-        records.append({"source": src, "file": str(out_file), "status": "ok", "marker": original})
-    return records
-
-
-def rewrite_image_links(markdown_text: str, image_records: List[Dict[str, str]]) -> str:
-    valid_records = [
-        rec
-        for rec in image_records
-        if rec.get("status") == "ok" and rec.get("source") and rec.get("file")
-    ]
-    if not valid_records:
-        return markdown_text
-
-    out = markdown_text
-    for rec in valid_records:
-        marker = rec.get("marker", "")
-        local_ref = f"media/{Path(rec['file']).name}"
-        if marker and marker in out:
-            if marker.startswith("!["):
-                localized = re.sub(r"(!\[[^\]]*\]\()([^)]+)(\))", rf"\g<1>{local_ref}\g<3>", marker, count=1)
-            else:
-                localized = re.sub(r"src=[\"'][^\"']+[\"']", f'src="{local_ref}"', marker, count=1, flags=re.IGNORECASE)
-            out = out.replace(marker, localized)
-
-    mapping = {rec["source"]: f"media/{Path(rec['file']).name}" for rec in valid_records}
-
-    def replace_md(m: re.Match[str]) -> str:
-        src = normalize_url("", m.group(1).strip())
-        if src in mapping:
-            return m.group(0).replace(m.group(1).strip(), mapping[src])
-        return m.group(0)
-
-    def replace_html(m: re.Match[str]) -> str:
-        src = m.group(1).strip()
-        if src in mapping:
-            return m.group(0).replace(src, mapping[src])
-        return m.group(0)
-
-    out = re.sub(r"!\[[^\]]*\]\(([^)]+)\)", replace_md, out)
-    out = re.sub(r"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>", replace_html, out, flags=re.IGNORECASE)
-    return out
-
-
-def build_translate_prompt(title: str, source_url: str, text: str) -> str:
-    return (
-        "你是高级技术翻译与技术写作助手。请将以下英文技术文档翻译为地道中文。"
-        "要求：\n"
-        "1) 完整保留原文 Markdown 结构（标题、列表、代码块、链接、表格、引用、任务列表、图片占位）。\n"
-        "2) 不添加未出现的技术事实。\n"
-        "3) 表格、链接、图片语法与占位符保持可识别结构。\n"
-        "4) 标题优先使用原文口吻与术语。\n\n"
-        f"文档标题: {title or 'Untitled'}\n"
-        f"来源: {source_url}\n\n{text}"
-    )
-
-
-def call_translator(text: str, title: str, source_url: str, cfg: argparse.Namespace) -> Tuple[str, str]:
-    mode = cfg.translate_mode
-    if not cfg.translate:
-        return text, "skipped(translate-disabled)"
-    if mode == "off":
-        return text, "skipped(no-translator)"
-    if mode == "auto":
-        if os.environ.get("LANGCRAFT_CMD"):
-            mode = "command"
-        elif os.environ.get("OPENAI_API_KEY"):
-            mode = "openai"
-        else:
-            return text, "skipped(no-translator-config)"
-    if mode == "command":
-        cmd = os.environ.get("LANGCRAFT_CMD")
-        if not cmd:
-            return text, "failed(no-LANGCRAFT_CMD)"
-        try:
-            p = subprocess.run(
-                cmd,
-                shell=True,
-                input=text,
-                text=True,
-                capture_output=True,
-                timeout=cfg.translate_timeout,
-            )
-            if p.returncode == 0 and p.stdout:
-                return p.stdout.strip(), "ok(command:LANGCRAFT_CMD)"
-            return text, f"failed(cmd:{p.returncode})"
-        except Exception as e:
-            return text, f"failed(cmd-exception:{type(e).__name__})"
-    if mode == "openai":
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            return text, "failed(no-OPENAI_API_KEY)"
-        api_url = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1/chat/completions")
-        model = os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o")
-        payload = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "你是中文技术文档翻译助手。请仅返回翻译结果，不要输出额外说明。",
-                },
-                {
-                    "role": "user",
-                    "content": build_translate_prompt(title, source_url, text),
-                },
-            ],
-            "temperature": 0.1,
-        }
-        req = urllib.request.Request(
-            api_url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=cfg.translate_timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8", errors="replace"))
-                translated = data["choices"][0]["message"]["content"].strip()
-                return translated, "ok(openai)"
-        except Exception as e:
-            return text, f"failed(openai:{type(e).__name__})"
-    return text, f"skipped(unsupported:{mode})"
-
-
-def pick_preferred_source_url(source_url: str) -> Tuple[str, bool]:
-    if not source_url:
-        return source_url, False
-    if "/zh-CN/" in source_url or re.search(r"/zh(?:-CN)?/", source_url):
-        return source_url, True
-    if not re.search(r"/en(?:-[A-Za-z]{2})?/", source_url):
-        return source_url, False
-    zh_candidate = re.sub(r"/en(?:-[A-Za-z]{2})?/", "/zh-CN/", source_url, count=1)
-    has_zh = test_source_available(zh_candidate)
-    if has_zh:
-        return zh_candidate, True
-    zh_candidate = re.sub(r"/en(?:-[A-Za-z]{2})?/", "/zh/", source_url, count=1)
-    has_zh = test_source_available(zh_candidate)
-    if has_zh:
-        return zh_candidate, True
-    return source_url, False
-
-
-def test_source_available(url: str) -> bool:
-    try:
-        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            return 200 <= resp.status < 300
-    except urllib.error.HTTPError as e:
-        if e.code in {405, 501}:
-            req = urllib.request.Request(url, headers={"User-Agent": UA})
-            try:
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    return 200 <= resp.status < 300
-            except Exception:
-                return False
-        return False
-    except Exception:
-        return False
-
-
-def write_metadata_block(meta: Dict[str, object]) -> str:
-    lines = ["---"]
-    for k, v in meta.items():
-        if isinstance(v, bool):
-            lines.append(f"{k}: {'true' if v else 'false'}")
-        elif isinstance(v, (int, float)):
-            lines.append(f"{k}: {v}")
-        else:
-            esc = str(v).replace("\"", '\\"')
-            lines.append(f'{k}: "{esc}"')
-    lines.append("---\n")
-    return "\n".join(lines)
-
-
-def build_targets(cfg: argparse.Namespace) -> List[Dict[str, str]]:
-    targets: List[Dict[str, str]] = []
-    if cfg.include_platform_docs:
-        for u in extract_links_from_llms(PLATFORM_DOCS_URL):
-            targets.append({"source_type": "platform_docs", "source_url": u, "seed_url": PLATFORM_DOCS_URL})
-    if cfg.include_code_docs:
-        for u in extract_links_from_llms(CODE_DOCS_URL):
-            targets.append({"source_type": "claude_code_docs", "source_url": u, "seed_url": CODE_DOCS_URL})
-    if cfg.include_news:
-        for u in discover_news_urls(allowed_prefixes=cfg.allowed_news_prefixes):
-            targets.append({"source_type": "anthropic_news", "source_url": u, "seed_url": SITEMAP_URL})
-    seen = set()
-    unique = []
-    for t in targets:
-        key = normalize_url_path(t["source_url"]) or t["source_url"]
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(t)
-    return sorted(unique, key=lambda x: (x["source_type"], x["source_url"]))
-
-
-def process_target(target: Dict[str, str], cfg: argparse.Namespace, batch_dir: Path, index: int) -> Dict[str, object]:
-    source_url = target["source_url"]
-    source_type = target["source_type"]
-    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    slug = safe_slug(source_url)
-    item_dir = batch_dir / f"{index:03d}_{slug}"
-    item_dir.mkdir(parents=True, exist_ok=True)
-    media_dir = item_dir / "media"
-    title = safe_slug(source_url)
-
-    selected_url = source_url
-    has_zh_version = False
-    if source_type != "anthropic_news":
-        selected_url, has_zh_version = pick_preferred_source_url(source_url)
-
-    raw_content, raw_ct = fetch_url(selected_url)
-    if has_zh_version and is_not_found_text(raw_content or "", extract_title(raw_content or "")):
-        selected_url = source_url
-        has_zh_version = False
-        raw_content, raw_ct = fetch_url(selected_url)
-    raw_source = selected_url
-    status = "fetched" if raw_content else "failed-fetch"
-
-    if source_type == "anthropic_news":
-        raw_content, raw_ct = fetch_url(source_url)
-        raw_source = source_url
-        raw_markdown = ""
-        title = extract_title(raw_content or "")
-        if raw_content:
-            raw_markdown = html_to_markdown(extract_main_article_html(raw_content))
-    else:
-        if raw_content and looks_markdown(selected_url, raw_ct or "", raw_content):
-            raw_markdown = raw_content.strip()
-            title = extract_title(raw_markdown) or title
-        elif raw_content:
-            title = extract_title(raw_content)
-            raw_markdown = html_to_markdown(extract_main_article_html(raw_content))
-        else:
-            raw_markdown = ""
-
-        # fallback title from markdown heading, then URL basename
-        parsed_title = extract_title_from_markdown(raw_markdown)
-        if parsed_title:
-            title = parsed_title
-        if not title:
-            title = Path(urllib.parse.urlparse(raw_source).path).name or safe_slug(source_url)
-
-    if not raw_markdown or is_not_found_text(raw_markdown, title) or visible_content_len(raw_markdown) < 20:
-        status = "failed-empty-or-not-found"
-
-    source_lang = "zh" if has_chinese(raw_markdown) else "en"
-    source_image_refs = extract_images(raw_markdown, raw_source)
-    images = download_images(source_image_refs, media_dir)
-    raw_markdown_local_images = rewrite_image_links(raw_markdown, images)
-
-    need_translate = source_lang != "zh" and not has_zh_version and cfg.translate
-    if need_translate:
-        translated_markdown, translator_note = call_translator(raw_markdown_local_images, title, source_url, cfg)
-    else:
-        translated_markdown = raw_markdown_local_images
-        translator_note = (
-            "skipped(no-translate-needed)" if (source_lang == "zh" or has_zh_version)
-            else "skipped(translate-disabled)"
-        )
-
-    final_lang = "zh" if (need_translate and translator_note.startswith("ok")) or source_lang == "zh" else "en"
-    final_markdown = translated_markdown
-    if need_translate and translator_note.startswith("ok") and not has_chinese(final_markdown):
-        translator_note = f"{translator_note};failed-language-check"
-        final_lang = "en"
-
-    table_source = count_tables(raw_markdown)
-    table_output = count_tables(final_markdown)
-    heading_source = count_headings(raw_markdown)
-    heading_output = count_headings(final_markdown)
-    link_source = count_links(raw_markdown)
-    link_output = count_links(final_markdown)
-
-    media_manifest = item_dir / "images.json"
-    media_manifest.write_text(json.dumps(images, ensure_ascii=False, indent=2), encoding="utf-8")
-    source_file = item_dir / "source.md"
-    final_file = item_dir / f"final.{final_lang}.md"
-    raw_file = item_dir / "raw.html"
-
-    source_meta = {
-        "title": title or "Untitled",
-        "source_type": source_type,
-        "source_url": source_url,
-        "selected_url": selected_url,
-        "has_zh_version": has_zh_version,
-        "source_language": source_lang,
-        "captured_at_utc": now,
-        "translator": translator_note,
-        "is_translated": need_translate and translator_note.startswith("ok"),
-        "image_count_source": len(source_image_refs),
-        "image_count_output": len(extract_images(final_markdown, raw_source)),
-        "visible_content_length": visible_content_len(final_markdown),
-        "final_chinese_ratio": chinese_ratio(final_markdown),
-        "table_count_source": table_source,
-        "table_count_output": table_output,
-        "heading_count_source": heading_source,
-        "heading_count_output": heading_output,
-        "link_count_source": link_source,
-        "link_count_output": link_output,
-    }
-    final_meta = {
-        **source_meta,
-        "need_translate": need_translate,
-        "has_local_images": all(
-            image.get("status") == "ok"
-            and image.get("file")
-            and f"media/{Path(str(image.get('file'))).name}" in final_markdown
-            for image in images
-        ) if images else False,
-        "media_manifest": str(media_manifest),
-    }
-    source_file.write_text(write_metadata_block(source_meta) + "\n" + raw_markdown, encoding="utf-8")
-    final_file.write_text(write_metadata_block(final_meta) + "\n" + final_markdown, encoding="utf-8")
-    raw_file.write_text(raw_content or "", encoding="utf-8")
-
-    return {
-        "status": status,
-        "source_type": source_type,
-        "title": title or "Untitled",
-        "source_url": source_url,
-        "selected_url": selected_url,
-        "slug": slug,
-        "has_zh_version": has_zh_version,
-        "need_translate": need_translate,
-        "translator": translator_note,
-        "source_language": source_lang,
-        "final_language": final_lang,
-        "captured_at_utc": now,
-        "source_path": str(source_file),
-        "final_path": str(final_file),
-        "media_manifest": str(media_manifest),
-        "media_dir": str(media_dir),
-        "image_count_source": len(source_image_refs),
-        "image_count_output": len(extract_images(final_markdown, raw_source)),
-        "visible_content_length": visible_content_len(final_markdown),
-        "final_chinese_ratio": chinese_ratio(final_markdown),
-        "table_count_source": table_source,
-        "table_count_output": table_output,
-        "heading_count_source": heading_source,
-        "heading_count_output": heading_output,
-        "link_count_source": link_source,
-        "link_count_output": link_output,
-        "images": images,
-    }
-
-
-def run_qa(manifest: Dict[str, object]) -> Dict[str, object]:
-    cfg = manifest.get("config", {})
-    if isinstance(cfg, dict) and cfg.get("skip_qa"):
-        return {"qa_status": "SKIPPED", "checked_items": len(manifest.get("items", [])), "errors": []}
-
-    items = manifest.get("items", [])
-    passed = True
-    missing: List[str] = []
-    errors: List[str] = []
-    image_delta = 0
-    table_delta = 0
-    heading_delta = 0
-    link_delta = 0
-
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        source_url = str(it.get("source_url"))
-        if it.get("status") != "fetched":
-            passed = False
-            errors.append(f"not_fetched: {source_url}")
-        src_path = Path(str(it.get("source_path", "")))
-        out_path = Path(str(it.get("final_path", "")))
-        if not src_path.exists() or not out_path.exists():
-            passed = False
-            missing.append(source_url)
-            continue
-        out_text = out_path.read_text(encoding="utf-8", errors="replace")
-        if visible_content_len(out_text) < 20:
-            passed = False
-            errors.append(f"empty_or_too_short_output: {source_url}")
-        if is_not_found_text(out_text, str(it.get("title", ""))):
-            passed = False
-            errors.append(f"not_found_output: {source_url}")
-        if not isinstance(it.get("image_count_source"), int):
-            passed = False
-            errors.append(f"bad_image_count_source: {source_url}")
-        if not isinstance(it.get("table_count_source"), int):
-            passed = False
-            errors.append(f"bad_table_count_source: {source_url}")
-        image_delta += int(it.get("image_count_output", 0)) - int(it.get("image_count_source", 0))
-        table_delta += int(it.get("table_count_output", 0)) - int(it.get("table_count_source", 0))
-        heading_delta += int(it.get("heading_count_output", 0)) - int(it.get("heading_count_source", 0))
-        link_delta += int(it.get("link_count_output", 0)) - int(it.get("link_count_source", 0))
-
-        if int(it.get("image_count_output", 0)) < int(it.get("image_count_source", 0)):
-            passed = False
-            errors.append(f"image_count_decrease: {source_url}")
-        if int(it.get("table_count_output", 0)) < int(it.get("table_count_source", 0)):
-            passed = False
-            errors.append(f"table_count_decrease: {source_url}")
-        if int(it.get("heading_count_output", 0)) < int(it.get("heading_count_source", 0)):
-            passed = False
-            errors.append(f"heading_count_decrease: {source_url}")
-        if int(it.get("link_count_output", 0)) < int(it.get("link_count_source", 0)):
-            passed = False
-            errors.append(f"link_count_decrease: {source_url}")
-        for image in it.get("images", []):
-            if not isinstance(image, dict):
-                continue
-            if image.get("status") != "ok":
-                passed = False
-                errors.append(f"image_download_failed: {source_url} -> {image.get('source')}")
-                continue
-            image_file = Path(str(image.get("file", "")))
-            if not image_file.is_file():
-                passed = False
-                errors.append(f"image_file_missing: {source_url} -> {image_file}")
-            if image_file.name and f"media/{image_file.name}" not in out_text:
-                passed = False
-                errors.append(f"image_not_localized: {source_url} -> {image_file.name}")
-        if it.get("need_translate") and not it.get("final_language") == "zh":
-            passed = False
-            errors.append(f"translate_missing: {source_url}")
-        if it.get("final_language") == "zh" and chinese_ratio(out_text) < 0.005:
-            passed = False
-            errors.append(f"zh_output_language_check_failed: {source_url}")
-
-    return {
-        "qa_status": "PASS" if passed else "FAIL",
-        "checked_items": len(items),
-        "image_count_delta": image_delta,
-        "table_count_delta": table_delta,
-        "heading_count_delta": heading_delta,
-        "link_count_delta": link_delta,
-        "missing_files": missing,
-        "errors": errors,
-        "checked_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-    }
-
-
-def write_batch(batch_items: List[Dict[str, object]], batch_dir: Path, cfg: argparse.Namespace) -> Dict[str, object]:
+import html as html_lib
+
+
+def write_batch(
+    batch_items: List[Dict[str, object]],
+    batch_dir: Path,
+    cfg: argparse.Namespace,
+    *,
+    logger: Optional[PipelineLogger] = None,
+) -> Dict[str, object]:
     batch_dir.mkdir(parents=True, exist_ok=True)
     manifest = {
         "batch_id": batch_dir.name,
@@ -905,15 +98,21 @@ def write_batch(batch_items: List[Dict[str, object]], batch_dir: Path, cfg: argp
         },
     }
     if not cfg.no_qa:
-        manifest["qa"] = run_qa(manifest)
+        manifest["qa"] = run_qa(manifest, logger=logger, batch_dir=batch_dir)
     else:
-        manifest["qa"] = {"qa_status": "SKIPPED", "checked_items": len(batch_items), "errors": []}
+        manifest["qa"] = {
+            "qa_status": QA_STATUS_SKIPPED,
+            "technical_status": QA_STATUS_SKIPPED,
+            "content_status": QA_STATUS_SKIPPED,
+            "checked_items": len(batch_items),
+            "errors": [],
+        }
     (batch_dir / "batch_qa_report.json").write_text(
         json.dumps(manifest["qa"], ensure_ascii=False, indent=2),
-        encoding="utf-8",
+        encoding=DEFAULT_CHARSET,
     )
     manifest_path = batch_dir / "batch_manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding=DEFAULT_CHARSET)
     return manifest
 
 
@@ -929,7 +128,7 @@ def commit_batch(batch_dir: Path) -> bool:
 def parse_doc_id_from_output(text: str) -> Optional[str]:
     if not text:
         return None
-    candidates = re.finditer(r"\{.*?\}", text, flags=re.DOTALL)
+    candidates = re.finditer(r"\{.*\}", text, flags=re.DOTALL)
     decoder = json.JSONDecoder()
     for m in candidates:
         chunk = m.group(0)
@@ -941,6 +140,8 @@ def parse_doc_id_from_output(text: str) -> Optional[str]:
             continue
         data = obj.get("data") if isinstance(obj.get("data"), dict) else {}
         if isinstance(data, dict):
+            if isinstance(data.get("token"), str):
+                return data["token"]
             if isinstance(data.get("document_id"), str):
                 return data["document_id"]
             if isinstance(data.get("url"), str):
@@ -953,6 +154,8 @@ def parse_doc_id_from_output(text: str) -> Optional[str]:
         if isinstance(obj.get("data"), dict) and isinstance(obj.get("data", {}).get("data"), dict):
             nested = obj["data"]["data"]
             if isinstance(nested, dict):
+                if isinstance(nested.get("token"), str):
+                    return nested["token"]
                 if isinstance(nested.get("document_id"), str):
                     return nested["document_id"]
                 if isinstance(nested.get("url"), str):
@@ -964,67 +167,743 @@ def parse_doc_id_from_output(text: str) -> Optional[str]:
                     return doc["url"]
 
     regex_candidates = re.findall(
-        r"""(?:"document_id"\s*:\s*"([^"]+)"|\"document_id\"\s*:\s*'([^']+)'|document_id[:=]\s*([A-Za-z0-9_-]+)|doc(?:ument)?_id[:=]\s*([A-Za-z0-9_-]+))""",
+        r"""(?:"document_id"\s*:\s*"([^"]+)"|\"document_id\"\s*:\s*'([^']+)'|"token"\s*:\s*"([^"]+)"|document_id[:=]\s*([A-Za-z0-9_-]+)|doc(?:ument)?_id[:=]\s*([A-Za-z0-9_-]+))""",
         text,
     )
     for groups in regex_candidates:
         for value in groups:
             if value:
                 return value
-    url_candidate = re.search(r"https://[A-Za-z0-9./?=&_%#:-]*docs[A-Za-z0-9./?=&_%#:-]*", text)
+    url_candidate = re.search(r"https://[A-Za-z0-9./?=&_%#:-]*docx[A-Za-z0-9./?=&_%#:-]*", text)
     if url_candidate:
         return url_candidate.group(0)
     return None
 
 
-def sync_to_feishu(manifest: Dict[str, object], cfg: argparse.Namespace, batch_dir: Path, out_root: Path) -> Dict[str, object]:
+def parse_lark_cli_json(text: str) -> Optional[Dict[str, object]]:
+    if not text:
+        return None
+    start = text.find("{")
+    if start < 0:
+        return None
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def feishu_doc_root_mode(cfg: argparse.Namespace) -> str:
+    return str(
+        getattr(
+            cfg,
+            "feishu_doc_root_mode",
+            os.environ.get("FEISHU_DOC_ROOT_MODE", "agent-docs-folder"),
+        )
+    )
+
+
+def feishu_folder_segment_name(name: str) -> str:
+    cleaned = re.sub(r'[\\/:*?"<>|]', "_", name.strip())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or "untitled"
+
+
+def feishu_should_skip_sync(source_url: str) -> bool:
+    path = urllib.parse.urlparse(source_url).path.lower()
+    return any(path.startswith(prefix) for prefix in FEISHU_EXCLUDED_URL_PATHS)
+
+
+def feishu_strip_docs_path(path_segs: List[str]) -> List[str]:
+    segs = list(path_segs)
+    if segs and segs[0] == "docs":
+        segs = segs[1:]
+    if segs and segs[0].lower() in FEISHU_DOC_LOCALE_PREFIXES:
+        segs = segs[1:]
+    return segs
+
+
+def feishu_path_base(cfg: argparse.Namespace, vendor: str = DEFAULT_VENDOR) -> List[str]:
+    """Folder segments relative to FEISHU_DOC_FOLDER_TOKEN (used for lark-cli mkdir).
+
+    ``agent-docs-folder`` (default): token points at existing ``agent-docs/`` folder;
+    segments start at ``anthropic-docs/Anthropic/…``.
+
+    ``parent``: token is parent of ``agent-docs``; segments include ``agent-docs/`` first.
+    """
+    lib_root = feishu_library_root(vendor)
+    brand_root = feishu_brand_root(vendor)
+    if feishu_doc_root_mode(cfg) == "parent":
+        return [AGENT_DOCS_ROOT, lib_root, brand_root]
+    return [lib_root, brand_root]
+
+
+def feishu_full_folder_path(folder_segments: Sequence[str], cfg: Optional[argparse.Namespace] = None) -> str:
+    """Full Feishu path from Drive root for reports and acceptance checks.
+
+    In ``agent-docs-folder`` mode the token already sits inside ``agent-docs/``, but
+    reports must still show ``agent-docs/anthropic-docs/…`` so humans and E2E
+    checklists match the intended layout.
+    """
+    segs = list(folder_segments)
+    if not segs:
+        return ""
+    if feishu_doc_root_mode(cfg) == "parent":
+        return "/".join(segs)
+    if segs[0] == AGENT_DOCS_ROOT:
+        return "/".join(segs)
+    return "/".join([AGENT_DOCS_ROOT, *segs])
+
+
+def feishu_folder_segments(
+    source_url: str,
+    source_type: str = "",
+    cfg: Optional[argparse.Namespace] = None,
+    vendor: str = DEFAULT_VENDOR,
+) -> List[str]:
+    """Map source URL to folder segments under FEISHU_DOC_FOLDER_TOKEN."""
+    parsed = urllib.parse.urlparse(source_url)
+    host = parsed.netloc.lower()
+    path_segs = [s for s in parsed.path.strip("/").split("/") if s]
+    ns = cfg or argparse.Namespace()
+    base = feishu_path_base(ns, vendor=vendor)
+
+    if host == "platform.claude.com":
+        doc_path = feishu_strip_docs_path(path_segs)
+        parent = doc_path[:-1] if len(doc_path) > 1 else []
+        return base + ["Developer-docs", *[feishu_folder_segment_name(s) for s in parent]]
+
+    if host == "code.claude.com":
+        doc_path = feishu_strip_docs_path(path_segs)
+        parent = doc_path[:-1] if len(doc_path) > 1 else []
+        return base + ["Developer-docs", "Claude Code", *[feishu_folder_segment_name(s) for s in parent]]
+
+    if host in {"www.anthropic.com", "anthropic.com"}:
+        if not path_segs:
+            return base + ["Other"]
+        first = path_segs[0].lower()
+        category_map = {
+            "learn": "Anthropic Academy",
+            "engineering": "Engineering",
+            "news": "News",
+            "research": "Research",
+            "economic-futures": "Economic Futures",
+            "system-cards": "System Cards",
+        }
+        category = category_map.get(first, feishu_folder_segment_name(path_segs[0]))
+        rest = path_segs[1:-1] if len(path_segs) > 1 else []
+        return base + [category, *[feishu_folder_segment_name(s) for s in rest]]
+
+    if host in {"claude.com", "www.claude.com"}:
+        lower_path = parsed.path.lower()
+        if lower_path.startswith("/resources/courses"):
+            return []
+        if path_segs and path_segs[0].lower() == "blog":
+            rest = path_segs[1:-1] if len(path_segs) > 2 else []
+            return base + ["Claude", "Blog", *[feishu_folder_segment_name(s) for s in rest]]
+        if len(path_segs) >= 2 and path_segs[0].lower() == "resources":
+            resource_map = {
+                "tutorials": "Tutorials",
+                "use-cases": "User Cases",
+            }
+            category = resource_map.get(path_segs[1].lower())
+            if category:
+                rest = path_segs[2:-1] if len(path_segs) > 3 else []
+                return base + [category, *[feishu_folder_segment_name(s) for s in rest]]
+        return base + ["Claude", "Other"]
+
+    # Legacy source_type fallback when URL host is unexpected.
+    legacy_map = {
+        "platform_docs": ["Developer-docs"],
+        "claude_code_docs": ["Developer-docs", "Claude Code"],
+        "anthropic_news": ["News"],
+    }
+    if source_type in legacy_map:
+        return base + legacy_map[source_type]
+    return base + ["Other"]
+
+
+def feishu_safe_name(title: str, max_len: int = 80) -> str:
+    name = re.sub(r'[\\/:*?"<>|]', "_", title.strip())
+    name = re.sub(r"\s+", " ", name).strip()
+    name = re.sub(r"-import$", "", name, flags=re.IGNORECASE)
+    if not name:
+        name = "untitled"
+    return name[:max_len]
+
+
+def build_feishu_source_attribution_block(meta: Dict[str, object]) -> str:
+    """Visible source attribution for Feishu import (frontmatter is stripped on import)."""
+    source_url = str(meta.get("source_url") or "").strip()
+    if not source_url:
+        return ""
+    published_at = str(meta.get("published_at") or "—").strip()
+    lines = [
+        "> **资料来源**",
+        f"> - 原文链接：[{source_url}]({source_url})",
+        f"> - 发布时间：{published_at}",
+    ]
+    lines.extend(["", "---", ""])
+    return "\n".join(lines)
+
+
+def sanitize_feishu_import_markdown(body: str) -> Tuple[str, List[str]]:
+    """Prepare markdown for drive +import: remove broken local media refs, keep alt text."""
+    image_alts: List[str] = []
+
+    def replace_md_image(match: re.Match[str]) -> str:
+        alt = match.group(1).strip() or "image"
+        image_alts.append(alt)
+        return f"\n\n**[图] {alt}**\n\n"
+
+    cleaned = body
+    cleaned = re.sub(r"!\[([^\]]*)\]\([^)]+\)", replace_md_image, cleaned)
+    cleaned = re.sub(r"<img[^>]+>", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\uFFFD", "", cleaned)
+    cleaned = re.sub(r"\n{4,}", "\n\n\n", cleaned)
+    return cleaned.strip() + "\n", image_alts
+
+
+def prepare_feishu_import_markdown(final_path: Path, payload_file: Path) -> Tuple[Path, List[str]]:
+    raw = final_path.read_text(encoding="utf-8")
+    meta, body = parse_frontmatter(raw)
+    attribution = build_feishu_source_attribution_block(meta)
+    body, image_alts = sanitize_feishu_import_markdown(body)
+    if attribution:
+        body = attribution + body
+    payload_file.parent.mkdir(parents=True, exist_ok=True)
+    payload_file.write_text(body, encoding="utf-8")
+    return payload_file, image_alts
+
+
+def load_feishu_folder_cache(cache_path: Path) -> Dict[str, str]:
+    if not cache_path.exists():
+        return {}
+    try:
+        loaded = json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {str(k): str(v) for k, v in loaded.items()}
+
+
+def save_feishu_folder_cache(cache_path: Path, cache: Dict[str, str]) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_feishu_index_cache(cache_path: Path) -> Dict[str, str]:
+    if not cache_path.exists():
+        return {}
+    try:
+        loaded = json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {str(k): str(v) for k, v in loaded.items()}
+
+
+def save_feishu_index_cache(cache_path: Path, cache: Dict[str, str]) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _md_table_cell(text: str) -> str:
+    return str(text).replace("|", "\\|").replace("\n", " ")
+
+
+def _md_table_link(url: str, label: Optional[str] = None) -> str:
+    if not url:
+        return "—"
+    return f"[{_md_table_cell(label or url)}]({url})"
+
+
+def build_folder_index_markdown(folder_path: str, items: List[Dict]) -> str:
+    lines = [
+        f"# {FEISHU_INDEX_DOC_TITLE}",
+        "",
+        f"**目录路径**：`{folder_path}`",
+        "",
+        "| 标题 | 原文链接 | 发布时间 | 飞书文档 | 状态 |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for item in items:
+        title = _md_table_cell(str(item.get("title") or "Untitled"))
+        source_url = str(item.get("source_url") or "")
+        doc_url = str(item.get("doc_url") or "")
+        published_at = _md_table_cell(str(item.get("published_at") or "—"))
+        status = _md_table_cell(str(item.get("status") or ""))
+        source_cell = _md_table_link(source_url)
+        doc_cell = _md_table_link(doc_url, "打开") if doc_url else "—"
+        lines.append(
+            f"| {title} | {source_cell} | {published_at} | {doc_cell} | {status} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def feishu_index_file_suffix(folder_token: str) -> str:
+    if folder_token.startswith("${"):
+        return hashlib.md5(folder_token.encode(DEFAULT_CHARSET)).hexdigest()[:FEISHU_FOLDER_TOKEN_HASH_LEN]
+    token = folder_token.strip()
+    return token[-FEISHU_FOLDER_TOKEN_HASH_LEN:] if len(token) >= FEISHU_FOLDER_TOKEN_HASH_LEN else token or "unknown"
+
+
+def merge_folder_index_items(existing: List[Dict], new_items: List[Dict]) -> List[Dict]:
+    by_url: Dict[str, Dict] = {}
+    for item in existing:
+        if isinstance(item, dict):
+            by_url[str(item.get("source_url", ""))] = item
+    for item in new_items:
+        if isinstance(item, dict):
+            by_url[str(item.get("source_url", ""))] = item
+    return sorted(by_url.values(), key=lambda x: str(x.get("title", "")))
+
+
+def load_feishu_folder_index(index_path: Path) -> Dict[str, object]:
+    if not index_path.exists():
+        return {"folders": {}}
+    try:
+        loaded = json.loads(index_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"folders": {}}
+    if not isinstance(loaded, dict):
+        return {"folders": {}}
+    folders = loaded.get("folders")
+    if not isinstance(folders, dict):
+        folders = {}
+    return {"folders": folders, **{k: v for k, v in loaded.items() if k != "folders"}}
+
+
+def save_feishu_folder_index(index_path: Path, payload: Dict[str, object]) -> None:
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def sync_feishu_folder_indexes(
+    sync_items: List[Dict[str, object]],
+    manifest_items: List[object],
+    cfg: argparse.Namespace,
+    batch_dir: Path,
+    out_root: Path,
+    script_path: Path,
+    sync_dir: Path,
+    *,
+    logger: Optional[PipelineLogger] = None,
+    batch_id: str = "",
+    sync_stage: str = "sync_dryrun",
+) -> List[Dict[str, object]]:
+    manifest_by_url: Dict[str, Dict] = {}
+    for it in manifest_items:
+        if isinstance(it, dict) and it.get("source_url"):
+            manifest_by_url[str(it["source_url"])] = it
+
+    groups: Dict[str, Dict[str, object]] = {}
+    for sync_item in sync_items:
+        if not isinstance(sync_item, dict):
+            continue
+        folder_token = sync_item.get("folder_token")
+        if not folder_token:
+            continue
+        folder_path = str(sync_item.get("folder_path") or "")
+        source_url = str(sync_item.get("source_url") or "")
+        manifest_item = manifest_by_url.get(source_url, {})
+        index_item = {
+            "title": sync_item.get("title") or manifest_item.get("title") or source_url,
+            "source_url": source_url,
+            "selected_url": manifest_item.get("selected_url") or source_url,
+            "published_at": manifest_item.get("published_at"),
+            "doc_url": sync_item.get("doc_url"),
+            "captured_at_utc": manifest_item.get("captured_at_utc"),
+            "status": sync_item.get("status"),
+        }
+        token_key = str(folder_token)
+        if token_key not in groups:
+            groups[token_key] = {"folder_path": folder_path, "items": []}
+        group_items = groups[token_key].get("items")
+        if isinstance(group_items, list):
+            group_items.append(index_item)
+
+    if not groups:
+        return []
+
+    index_cache_path = out_root / FEISHU_INDEX_CACHE_NAME
+    index_cache = load_feishu_index_cache(index_cache_path)
+    folder_index_path = out_root / FEISHU_FOLDER_INDEX_NAME
+    folder_index_payload = load_feishu_folder_index(folder_index_path)
+    folders_map = folder_index_payload.setdefault("folders", {})
+    if not isinstance(folders_map, dict):
+        folders_map = {}
+        folder_index_payload["folders"] = folders_map
+
+    index_reports: List[Dict[str, object]] = []
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    for folder_token, group in groups.items():
+        folder_path = str(group.get("folder_path") or "")
+        raw_items = group.get("items")
+        index_items = [x for x in raw_items if isinstance(x, dict)] if isinstance(raw_items, list) else []
+        index_items.sort(key=lambda x: str(x.get("title", "")))
+        index_md = build_folder_index_markdown(folder_path, index_items)
+        token_suffix = feishu_index_file_suffix(folder_token)
+        index_file = sync_dir / f"index_{token_suffix}.md"
+        index_file.write_text(index_md, encoding="utf-8")
+        index_rel = index_file.relative_to(out_root)
+        cached_doc_id = index_cache.get(folder_token)
+
+        if isinstance(folders_map, dict):
+            existing = folders_map.get(folder_path, [])
+            merged = merge_folder_index_items(existing if isinstance(existing, list) else [], index_items)
+            folders_map[folder_path] = merged
+
+        report: Dict[str, object] = {
+            "folder_token": folder_token,
+            "folder_path": folder_path,
+            "index_file": str(index_file),
+            "item_count": len(index_items),
+            "doc_id": cached_doc_id,
+            "action": "pending",
+        }
+
+        if cached_doc_id:
+            update_cmd = [
+                "lark-cli",
+                "docs",
+                "+update",
+                "--api-version",
+                "v2",
+                "--doc",
+                cached_doc_id,
+                "--markdown",
+                str(index_rel),
+                "--mode",
+                "overwrite",
+            ]
+            update_cmd_str = " ".join(shlex.quote(x) for x in update_cmd)
+            if not cfg.execute_feishu:
+                with script_path.open("a", encoding="utf-8") as sf:
+                    sf.write(f"{update_cmd_str}\n")
+                report["action"] = "dry-run-update"
+                report["command"] = update_cmd_str
+                if logger:
+                    logger.log(
+                        "INFO",
+                        sync_stage,
+                        batch_id=batch_id,
+                        message="folder_index_dryrun_update",
+                        folder_path=folder_path,
+                        folder_token=folder_token,
+                        doc_id=cached_doc_id,
+                        artifact_path=str(index_file),
+                    )
+            else:
+                rc, out, _ = run_lark_cli(update_cmd, out_root, cfg.sync_timeout)
+                if rc == 0:
+                    report["action"] = "updated"
+                    report["command"] = update_cmd_str
+                    if logger:
+                        logger.log(
+                            "INFO",
+                            sync_stage,
+                            batch_id=batch_id,
+                            message="folder_index_updated",
+                            folder_path=folder_path,
+                            folder_token=folder_token,
+                            doc_id=cached_doc_id,
+                            artifact_path=str(index_file),
+                        )
+                else:
+                    if logger:
+                        logger.log(
+                            "WARN",
+                            sync_stage,
+                            batch_id=batch_id,
+                            error_code="folder_index_update_failed",
+                            message=f"docs +update rc={rc}; fallback to re-import",
+                            folder_path=folder_path,
+                            folder_token=folder_token,
+                            doc_id=cached_doc_id,
+                            artifact_path=str(index_file),
+                        )
+                    cached_doc_id = None
+
+        if not cached_doc_id:
+            import_cmd = [
+                "lark-cli",
+                "drive",
+                "+import",
+                "--file",
+                str(index_rel),
+                "--folder-token",
+                folder_token,
+                "--type",
+                "docx",
+                "--name",
+                FEISHU_INDEX_DOC_TITLE,
+            ]
+            import_cmd_str = " ".join(shlex.quote(x) for x in import_cmd)
+            if not cfg.execute_feishu:
+                with script_path.open("a", encoding="utf-8") as sf:
+                    sf.write(f"{import_cmd_str}\n")
+                report["action"] = "dry-run-import"
+                report["command"] = import_cmd_str
+                if logger:
+                    logger.log(
+                        "INFO",
+                        sync_stage,
+                        batch_id=batch_id,
+                        message="folder_index_dryrun_import",
+                        folder_path=folder_path,
+                        folder_token=folder_token,
+                        artifact_path=str(index_file),
+                    )
+            else:
+                rc, out, _ = run_lark_cli(import_cmd, out_root, cfg.sync_timeout)
+                if rc != 0:
+                    report["action"] = f"import_failed({rc})"
+                    if logger:
+                        logger.log(
+                            "ERROR",
+                            sync_stage,
+                            batch_id=batch_id,
+                            error_code="folder_index_import_failed",
+                            message=f"drive +import rc={rc}",
+                            folder_path=folder_path,
+                            folder_token=folder_token,
+                            artifact_path=str(index_file),
+                        )
+                else:
+                    doc_id = parse_doc_id_from_output(out)
+                    if doc_id:
+                        index_cache[folder_token] = doc_id
+                        report["doc_id"] = doc_id
+                        report["doc_url"] = f"https://my.feishu.cn/docx/{doc_id}"
+                        report["action"] = "imported"
+                        if logger:
+                            logger.log(
+                                "INFO",
+                                sync_stage,
+                                batch_id=batch_id,
+                                message="folder_index_imported",
+                                folder_path=folder_path,
+                                folder_token=folder_token,
+                                doc_id=doc_id,
+                                artifact_path=str(index_file),
+                            )
+                    else:
+                        report["action"] = "import_no_doc_id"
+                        if logger:
+                            logger.log(
+                                "ERROR",
+                                sync_stage,
+                                batch_id=batch_id,
+                                error_code="folder_index_no_doc_id",
+                                message="import succeeded but doc_id missing",
+                                folder_path=folder_path,
+                                folder_token=folder_token,
+                                artifact_path=str(index_file),
+                            )
+
+        index_reports.append(report)
+
+    folder_index_payload["updated_at_utc"] = now
+    save_feishu_folder_index(folder_index_path, folder_index_payload)
+    save_feishu_index_cache(index_cache_path, index_cache)
+    return index_reports
+
+
+def feishu_folder_cache_key(parent_token: str, name: str) -> str:
+    return f"{parent_token}::{name}"
+
+
+def image_selection_hint(marker: str) -> Optional[str]:
+    if not marker:
+        return None
+    alt_match = re.search(r"!\[([^\]]*)\]", marker)
+    if alt_match:
+        alt = alt_match.group(1).strip()
+        if len(alt) >= FEISHU_ALT_TEXT_MIN_LEN:
+            return alt[: min(FEISHU_ALT_TEXT_HINT_MAX_LEN, len(alt))]
+        if alt:
+            return alt
+    return None
+
+
+def run_lark_cli(args: Sequence[str], cwd: Path, timeout: int) -> Tuple[int, str, str]:
+    proc = subprocess.run(
+        list(args),
+        cwd=str(cwd),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    out = (proc.stdout or "") + (proc.stderr or "")
+    return proc.returncode, out, proc.stderr or ""
+
+
+def ensure_feishu_folder(
+    name: str,
+    parent_token: str,
+    cache: Dict[str, str],
+    cache_key: str,
+    cfg: argparse.Namespace,
+    cwd: Path,
+) -> str:
+    stable_key = feishu_folder_cache_key(parent_token, name)
+    if stable_key in cache:
+        return cache[stable_key]
+    if cache_key in cache:
+        return cache[cache_key]
+    if not cfg.execute_feishu:
+        placeholder = f"${{FEISHU_FOLDER_{cache_key}}}"
+        cache[stable_key] = placeholder
+        cache[cache_key] = placeholder
+        return placeholder
+    rc, out, _ = run_lark_cli(
+        ["lark-cli", "drive", "+create-folder", "--name", name, "--folder-token", parent_token],
+        cwd,
+        cfg.sync_timeout,
+    )
+    parsed = parse_lark_cli_json(out)
+    token = None
+    if parsed and parsed.get("ok") and isinstance(parsed.get("data"), dict):
+        token = parsed["data"].get("folder_token")
+    if not token:
+        raise RuntimeError(f"create-folder failed for {name}: rc={rc} {out[:FEISHU_ERROR_SNIPPET_MAX_LEN]}")
+    cache[stable_key] = str(token)
+    cache[cache_key] = str(token)
+    return str(token)
+
+
+def verify_feishu_document(doc_id: str, cfg: argparse.Namespace, min_len: int = FEISHU_VERIFY_MIN_CONTENT_LEN) -> Dict[str, object]:
+    if not cfg.execute_feishu:
+        return {"verified": True, "reason": "dry-run"}
+    rc, out, _ = run_lark_cli(
+        ["lark-cli", "docs", "+fetch", "--api-version", "v2", "--doc", doc_id],
+        Path.cwd(),
+        cfg.sync_timeout,
+    )
+    parsed = parse_lark_cli_json(out)
+    if rc != 0 or not parsed or not parsed.get("ok"):
+        return {"verified": False, "reason": "fetch_failed", "raw": out[:500]}
+    content = ""
+    data = parsed.get("data")
+    if isinstance(data, dict):
+        doc = data.get("document")
+        if isinstance(doc, dict) and isinstance(doc.get("content"), str):
+            content = doc["content"]
+    visible = re.sub(r"<[^>]+>", "", content)
+    visible = re.sub(r"\s+", "", visible)
+    image_count = len(re.findall(r"<img\b", content, flags=re.IGNORECASE))
+    return {
+        "verified": len(visible) >= min_len,
+        "content_length": len(visible),
+        "image_count": image_count,
+        "min_required": min_len,
+    }
+
+
+def sync_to_feishu(
+    manifest: Dict[str, object],
+    cfg: argparse.Namespace,
+    batch_dir: Path,
+    out_root: Path,
+    *,
+    logger: Optional[PipelineLogger] = None,
+) -> Dict[str, object]:
     if not cfg.sync_feishu:
         return {"status": "SKIPPED", "reason": "sync-feishu-disabled"}
     out_root = out_root.resolve()
     batch_dir = batch_dir.resolve()
+    batch_id = str(manifest.get("batch_id", batch_dir.name))
+    sync_stage = "sync_execute" if cfg.execute_feishu else "sync_dryrun"
     qa_status = manifest.get("qa", {}).get("qa_status")
     if qa_status != "PASS" and not cfg.force_sync:
+        if logger:
+            logger.log(
+                "WARN",
+                sync_stage,
+                batch_id=batch_id,
+                error_code="sync_blocked",
+                message=f"QA status {qa_status}",
+                artifact_path=str(batch_dir / "feishu_sync_report.json"),
+            )
         return {"status": "BLOCKED", "reason": f"qa_status={qa_status}", "items": []}
 
     folder_token = cfg.feishu_folder_token or os.environ.get("FEISHU_DOC_FOLDER_TOKEN")
     if cfg.execute_feishu and not folder_token:
+        if logger:
+            logger.log(
+                "ERROR",
+                sync_stage,
+                batch_id=batch_id,
+                error_code="feishu_token_missing",
+                message="FEISHU_DOC_FOLDER_TOKEN missing",
+            )
         return {"status": "FAIL", "reason": "FEISHU_DOC_FOLDER_TOKEN missing"}
-    lark_cli = shutil.which("lark-cli")
-    if cfg.execute_feishu and not lark_cli:
+    if cfg.execute_feishu and not shutil.which("lark-cli"):
+        if logger:
+            logger.log(
+                "ERROR",
+                sync_stage,
+                batch_id=batch_id,
+                error_code="lark_cli_missing",
+                message="lark-cli not installed",
+            )
         return {"status": "FAIL", "reason": "lark-cli not installed"}
 
-    token_placeholder = folder_token or "${FEISHU_DOC_FOLDER_TOKEN}"
+    root_token = folder_token or "${FEISHU_DOC_FOLDER_TOKEN}"
+    folder_cache_path = out_root / FEISHU_FOLDER_CACHE_NAME
+    folder_cache = load_feishu_folder_cache(folder_cache_path)
+    if cfg.execute_feishu:
+        placeholder_keys = [
+            k
+            for k, v in folder_cache.items()
+            if isinstance(v, str) and v.startswith("${FEISHU_FOLDER_") and v.endswith("}")
+        ]
+        if placeholder_keys:
+            for key in placeholder_keys:
+                folder_cache.pop(key, None)
+            if logger:
+                logger.log(
+                    "WARN",
+                    sync_stage,
+                    batch_id=batch_id,
+                    error_code="feishu_folder_cache_placeholder_reset",
+                    message="removed placeholder folder tokens before execute-sync; stale from dry-run",
+                    artifact_path=str(batch_dir / "feishu_sync_report.json"),
+                )
 
     items = manifest.get("items", [])
     total = len(items)
-    ok = 0
     fail: List[str] = []
     media_upload_count = 0
     item_success = 0
     sync_items: List[Dict[str, object]] = []
     script_path = batch_dir / "feishu_sync_commands.sh"
-    script_content = [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        f"cd {shlex.quote(str(out_root))}",
-        "",
-        'if [ -z "${FEISHU_DOC_FOLDER_TOKEN:-}" ]; then',
-        '  echo "env FEISHU_DOC_FOLDER_TOKEN required for execution. Using placeholder in commands."',
-        "fi",
-        "",
-    ]
     script_path.write_text(
-        "\n".join(script_content) + "\n",
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f"cd {shlex.quote(str(out_root))}",
+                "",
+            ]
+        )
+        + "\n",
         encoding="utf-8",
     )
     script_path.chmod(0o755)
     sync_dir = batch_dir / "sync_payload"
     sync_dir.mkdir(parents=True, exist_ok=True)
 
-    for it in items:
+    for item_index, it in enumerate(items, start=1):
         if not isinstance(it, dict):
             continue
         source_url = str(it.get("source_url"))
+        log_ctx = {"batch_id": batch_id, "item_total": total, "item_index": item_index}
         title = str(it.get("title", source_url))
         final_path = Path(str(it.get("final_path", "")))
         source_type = str(it.get("source_type", ""))
@@ -1032,50 +911,116 @@ def sync_to_feishu(manifest: Dict[str, object], cfg: argparse.Namespace, batch_d
         media_items = it.get("images", [])
         if not final_path.exists():
             fail.append(f"{source_url}: final path missing")
+            if logger:
+                logger.log(
+                    "ERROR",
+                    sync_stage,
+                    **log_ctx,
+                    error_code="sync_item_missing_final",
+                    message="final_path missing for sync",
+                    artifact_path=str(batch_dir / "feishu_sync_report.json"),
+                    source_url=source_url,
+                )
+            sync_items.append({"source_url": source_url, "status": "failed(final-path-missing)"})
             continue
 
-        content_rel = str(final_path.resolve().relative_to(out_root.resolve()))
-        create_cmd = [
+        payload_file = sync_dir / f"{slug}.feishu.md"
+        _, _image_alts = prepare_feishu_import_markdown(final_path, payload_file)
+        payload_rel = payload_file.relative_to(out_root)
+        import_name = feishu_safe_name(title)
+
+        if feishu_should_skip_sync(source_url):
+            if logger:
+                logger.log(
+                    "INFO",
+                    sync_stage,
+                    **log_ctx,
+                    message="sync skipped by URL policy",
+                    artifact_path=str(batch_dir / "feishu_sync_report.json"),
+                    source_url=source_url,
+                    reason="excluded-url",
+                )
+            sync_items.append(
+                {
+                    "source_url": source_url,
+                    "status": "skipped(excluded-url)",
+                    "reason": "courses/video-only path excluded in this phase",
+                }
+            )
+            continue
+        folder_segments = feishu_folder_segments(source_url, source_type, cfg)
+        if not folder_segments:
+            if logger:
+                logger.log(
+                    "WARN",
+                    sync_stage,
+                    **log_ctx,
+                    error_code="sync_no_folder_segments",
+                    message="folder mapping returned empty",
+                    artifact_path=str(batch_dir / "feishu_sync_report.json"),
+                    source_url=source_url,
+                )
+            sync_items.append({"source_url": source_url, "status": "skipped(no-folder-path)"})
+            continue
+
+        try:
+            target_folder = root_token
+            for idx, segment in enumerate(folder_segments):
+                cache_key = "/".join(folder_segments[: idx + 1])
+                target_folder = ensure_feishu_folder(segment, target_folder, folder_cache, cache_key, cfg, out_root)
+        except Exception as e:
+            fail.append(f"{source_url}: folder setup failed({type(e).__name__})")
+            if logger:
+                logger.log(
+                    "ERROR",
+                    sync_stage,
+                    **log_ctx,
+                    error_code="feishu_folder_setup_failed",
+                    message=f"{type(e).__name__}: {e}",
+                    artifact_path=str(batch_dir / "feishu_sync_report.json"),
+                    source_url=source_url,
+                    folder_segments=folder_segments,
+                )
+            sync_items.append({"source_url": source_url, "status": f"folder_failed({type(e).__name__})"})
+            continue
+
+        import_cmd = [
             "lark-cli",
-            "docs",
-            "+create",
-            "--api-version",
-            "v2",
-            "--title",
-            title,
-            "--content",
-            f"@{content_rel}",
+            "drive",
+            "+import",
+            "--file",
+            str(payload_rel),
+            "--folder-token",
+            target_folder,
+            "--type",
+            "docx",
+            "--name",
+            import_name,
         ]
-        create_cmd.extend(["--folder-token", token_placeholder])
-
-        payload_file = sync_dir / f"{slug}-payload.md"
-        if not payload_file.exists():
-            payload_file.write_text(final_path.read_text(encoding="utf-8"), encoding="utf-8")
-        create_cmd[create_cmd.index("--content") + 1] = f"@{payload_file.relative_to(out_root)}"
-
-        create_cmd_str = " ".join(shlex.quote(x) for x in create_cmd)
+        import_cmd_str = " ".join(shlex.quote(x) for x in import_cmd)
         with script_path.open("a", encoding="utf-8") as sf:
-            sf.write(f"{create_cmd_str}\n")
+            sf.write(f"{import_cmd_str}\n")
 
         item_report: Dict[str, object] = {
             "source_url": source_url,
             "title": title,
-            "create_command": create_cmd_str,
+            "folder_segments": folder_segments,
+            "folder_path": feishu_full_folder_path(folder_segments, cfg),
+            "folder_token": target_folder,
+            "import_command": import_cmd_str,
             "status": "pending",
             "doc_id": None,
             "media_upload_count": 0,
             "media_uploads": [],
+            "verification": None,
         }
 
         if not cfg.execute_feishu:
             planned_media = 0
             for image in media_items:
-                if not isinstance(image, dict):
+                if not isinstance(image, dict) or image.get("status") != "ok" or not image.get("file"):
                     continue
-                image_file = image.get("file", "")
-                if not image_file:
-                    continue
-                image_path = Path(image_file)
+                image_path = Path(str(image["file"]))
                 if not image_path.is_file():
                     continue
                 media_upload_cmd = [
@@ -1083,55 +1028,77 @@ def sync_to_feishu(manifest: Dict[str, object], cfg: argparse.Namespace, batch_d
                     "docs",
                     "+media-insert",
                     "--doc",
-                    "<DOC_ID_OR_URL_FROM_CREATE>",
+                    "<DOC_ID_FROM_IMPORT>",
                     "--file",
                     f"{image_path.resolve().relative_to(out_root)}",
                     "--type",
                     "image",
                 ]
+                if isinstance(image.get("marker"), str):
+                    alt_match = re.search(r"!\[([^\]]*)\]", str(image.get("marker")))
+                    if alt_match and alt_match.group(1).strip():
+                        media_upload_cmd.extend(["--caption", alt_match.group(1).strip()[:FEISHU_MEDIA_CAPTION_MAX_LEN]])
                 media_cmd_str = " ".join(shlex.quote(x) for x in media_upload_cmd)
                 with script_path.open("a", encoding="utf-8") as sf:
                     sf.write(f"{media_cmd_str}\n")
                 item_report["media_uploads"].append(media_cmd_str)
                 planned_media += 1
             item_report["media_upload_count"] = planned_media
-            sync_items.append(item_report)
             item_report["status"] = "ok-dry-run"
+            sync_items.append(item_report)
             item_success += 1
-            ok += 1
             continue
 
         try:
-            proc = subprocess.run(
-                create_cmd,
-                cwd=str(out_root),
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=cfg.sync_timeout,
-            )
-            if proc.returncode != 0:
-                fail.append(f"{source_url}: create failed({proc.returncode})")
-                item_report["status"] = f"create_failed({proc.returncode})"
+            rc, out, _ = run_lark_cli(import_cmd, out_root, cfg.sync_timeout)
+            if rc != 0:
+                fail.append(f"{source_url}: import failed({rc})")
+                if logger:
+                    logger.log(
+                        "ERROR",
+                        sync_stage,
+                        **log_ctx,
+                        error_code="feishu_import_failed",
+                        message=f"drive +import exited {rc}",
+                        artifact_path=str(batch_dir / "feishu_sync_report.json"),
+                        source_url=source_url,
+                        import_command=import_cmd_str,
+                    )
+                item_report["status"] = f"import_failed({rc})"
                 sync_items.append(item_report)
                 continue
-            out = proc.stdout.strip()
             doc_id = parse_doc_id_from_output(out)
             if not doc_id:
-                item_report["status"] = "create_no_doc_id"
+                fail.append(f"{source_url}: import succeeded but no doc_id")
+                if logger:
+                    logger.log(
+                        "ERROR",
+                        sync_stage,
+                        **log_ctx,
+                        error_code="feishu_import_no_doc_id",
+                        message="import output missing doc_id",
+                        artifact_path=str(batch_dir / "feishu_sync_report.json"),
+                        source_url=source_url,
+                        import_stdout=out[:400],
+                    )
+                item_report["status"] = "import_no_doc_id"
                 sync_items.append(item_report)
-                fail.append(f"{source_url}: create succeeded but no doc_id")
                 continue
             item_report["doc_id"] = doc_id
+            item_report["doc_url"] = f"https://my.feishu.cn/docx/{doc_id}"
+
+            expected_images = sum(
+                1
+                for image in media_items
+                if isinstance(image, dict) and image.get("status") == "ok" and image.get("file")
+            )
+            item_report["expected_images"] = expected_images
             item_media_uploaded = 0
-            media_upload_succeeded = True
+            media_failures: List[str] = []
             for image in media_items:
-                if not isinstance(image, dict):
+                if not isinstance(image, dict) or image.get("status") != "ok" or not image.get("file"):
                     continue
-                image_file = image.get("file", "")
-                if not image_file:
-                    continue
-                image_path = Path(image_file)
+                image_path = Path(str(image["file"]))
                 if not image_path.is_file():
                     continue
                 media_upload_cmd = [
@@ -1139,44 +1106,115 @@ def sync_to_feishu(manifest: Dict[str, object], cfg: argparse.Namespace, batch_d
                     "docs",
                     "+media-insert",
                     "--doc",
-                    doc_id or "<DOC_ID>",
+                    doc_id,
                     "--file",
                     f"{image_path.resolve().relative_to(out_root)}",
                     "--type",
                     "image",
                 ]
+                if isinstance(image.get("marker"), str):
+                    alt_match = re.search(r"!\[([^\]]*)\]", str(image.get("marker")))
+                    if alt_match and alt_match.group(1).strip():
+                        media_upload_cmd.extend(["--caption", alt_match.group(1).strip()[:FEISHU_MEDIA_CAPTION_MAX_LEN]])
                 media_cmd_str = " ".join(shlex.quote(x) for x in media_upload_cmd)
                 with script_path.open("a", encoding="utf-8") as sf:
                     sf.write(f"{media_cmd_str}\n")
                 item_report["media_uploads"].append(media_cmd_str)
-                media_proc = subprocess.run(
-                    media_upload_cmd,
-                    cwd=str(out_root),
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=cfg.sync_timeout,
-                )
-                if media_proc.returncode != 0:
-                    media_upload_succeeded = False
-                    fail.append(f"{source_url}: media-upload failed")
-                    item_report["status"] = f"media_upload_failed({media_proc.returncode})"
-                    break
+                media_rc, media_out, _ = run_lark_cli(media_upload_cmd, out_root, cfg.sync_timeout)
+                if media_rc != 0:
+                    media_failures.append(f"{image_path.name}({media_rc})")
+                    if logger:
+                        logger.log(
+                            "WARN",
+                            sync_stage,
+                            **log_ctx,
+                            error_code="feishu_media_upload_failed",
+                            message=f"docs +media-insert failed for {image_path.name}: rc={media_rc}",
+                            artifact_path=str(batch_dir / "feishu_sync_report.json"),
+                            source_url=source_url,
+                            doc_id=doc_id,
+                        )
+                    continue
                 media_upload_count += 1
                 item_media_uploaded += 1
-                item_report["media_upload_count"] = item_media_uploaded
-            if media_upload_succeeded:
+            item_report["media_upload_count"] = item_media_uploaded
+            item_report["media_failures"] = media_failures
+            verification = verify_feishu_document(doc_id, cfg)
+            item_report["verification"] = verification
+            fetched_images = int(verification.get("image_count") or 0)
+            if media_failures:
+                item_report["status"] = "ok-content-media-partial"
+                fail.extend(f"{source_url}: media-upload failed for {name}" for name in media_failures)
+            elif not verification.get("verified"):
+                fail.append(f"{source_url}: content verification failed")
+                if logger:
+                    logger.log(
+                        "ERROR",
+                        sync_stage,
+                        **log_ctx,
+                        error_code="feishu_verify_failed",
+                        message=f"content verification failed: {verification}",
+                        artifact_path=str(batch_dir / "feishu_sync_report.json"),
+                        source_url=source_url,
+                        doc_id=doc_id,
+                    )
+                item_report["status"] = "verify_failed"
+            elif expected_images > 0 and fetched_images < expected_images:
+                item_report["status"] = "ok-content-images-mismatch"
+                fail.append(
+                    f"{source_url}: image count mismatch (expected>={expected_images}, fetched={fetched_images})"
+                )
+            else:
                 item_report["status"] = "ok"
-                item_success += 1
-                item_report["media_upload_count"] = item_media_uploaded
+            item_success += 1
             sync_items.append(item_report)
         except Exception as e:
             fail.append(f"{source_url}: {type(e).__name__}")
+            if logger:
+                logger.log(
+                    "ERROR",
+                    sync_stage,
+                    **log_ctx,
+                    error_code="sync_execute_exception",
+                    message=f"{type(e).__name__}: {e}",
+                    artifact_path=str(batch_dir / "feishu_sync_report.json"),
+                    source_url=source_url,
+                )
             item_report["status"] = f"failed({type(e).__name__})"
             sync_items.append(item_report)
 
+    index_reports = sync_feishu_folder_indexes(
+        sync_items,
+        items if isinstance(items, list) else [],
+        cfg,
+        batch_dir,
+        out_root,
+        script_path,
+        sync_dir,
+        logger=logger,
+        batch_id=batch_id,
+        sync_stage=sync_stage,
+    )
+
+    save_feishu_folder_cache(folder_cache_path, folder_cache)
+    report_status = "DRY_RUN" if not cfg.execute_feishu else ("PASS" if not fail else "PARTIAL")
+    if logger:
+        level = "INFO" if report_status in {"PASS", "DRY_RUN"} else "ERROR"
+        logger.log(
+            level,
+            sync_stage,
+            batch_id=batch_id,
+            message="sync_complete",
+            status=report_status,
+            success=item_success,
+            total=total,
+            fail_count=len(fail),
+            artifact_path=str(batch_dir / "feishu_sync_report.json"),
+        )
     report = {
-        "status": ("DRY_RUN" if not cfg.execute_feishu and not fail else ("PASS" if not fail else "PARTIAL")),
+        "status": report_status,
+        "strategy": "drive+import",
+        "feishu_doc_root_mode": getattr(cfg, "feishu_doc_root_mode", "agent-docs-folder"),
         "total": total,
         "success": item_success,
         "fail": fail,
@@ -1185,6 +1223,10 @@ def sync_to_feishu(manifest: Dict[str, object], cfg: argparse.Namespace, batch_d
         "sync_timeout": cfg.sync_timeout,
         "command_file": str(script_path),
         "payload_dir": str(sync_dir),
+        "folder_cache": str(folder_cache_path),
+        "index_cache": str(out_root / FEISHU_INDEX_CACHE_NAME),
+        "feishu_folder_index": str(out_root / FEISHU_FOLDER_INDEX_NAME),
+        "folder_indexes": index_reports,
         "media_upload_count": media_upload_count,
     }
     report_path = batch_dir / "feishu_sync_report.json"
@@ -1209,8 +1251,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--execute-feishu", action="store_true", help="Actually run lark-cli commands")
     parser.add_argument("--sync-feishu", action="store_true")
     parser.add_argument("--force-sync", action="store_true", help="Allow Feishu sync even when QA did not pass")
-    parser.add_argument("--sync-timeout", type=int, default=120)
+    parser.add_argument("--sync-timeout", type=int, default=DEFAULT_SYNC_TIMEOUT)
     parser.add_argument("--feishu-folder-token", default="")
+    parser.add_argument(
+        "--feishu-doc-root-mode",
+        choices=["agent-docs-folder", "parent"],
+        default=os.environ.get("FEISHU_DOC_ROOT_MODE", "agent-docs-folder"),
+        help="agent-docs-folder: FEISHU_DOC_FOLDER_TOKEN points to agent-docs/; parent: token is parent, pipeline creates agent-docs/",
+    )
 
     parser.add_argument("--commit", action="store_true")
     parser.add_argument("--force-commit", action="store_true")
@@ -1226,6 +1274,13 @@ def parse_args() -> argparse.Namespace:
     source.add_argument("--no-include-code-docs", dest="include_code_docs", action="store_false")
     source.add_argument("--include-news", dest="include_news", action="store_true", default=True)
     source.add_argument("--no-include-news", dest="include_news", action="store_false")
+    source.add_argument(
+        "--target-url",
+        dest="target_urls",
+        action="append",
+        default=None,
+        help="Limit crawl targets to exact source URLs (repeatable).",
+    )
 
     parser.add_argument("--discover-only", action="store_true")
 
@@ -1262,6 +1317,15 @@ def run_pipeline(cfg: argparse.Namespace) -> Dict[str, object]:
             "items": [],
         }
     out_root.mkdir(parents=True, exist_ok=True)
+    logger = PipelineLogger(out_root)
+    logger.log(
+        "INFO",
+        "discover",
+        message="pipeline_start",
+        target_count=len(targets),
+        batch_size=cfg.batch_size,
+        output_root=str(out_root),
+    )
     batches: List[Dict[str, object]] = []
     all_items: List[Dict[str, object]] = []
 
@@ -1270,11 +1334,38 @@ def run_pipeline(cfg: argparse.Namespace) -> Dict[str, object]:
         batch_name = f"batch-{batch_index // cfg.batch_size + 1:03d}"
         batch_dir = out_root / batch_name
         batch_items: List[Dict[str, object]] = []
+        item_total = len(this_batch)
+        logger.log(
+            "INFO",
+            "crawl",
+            batch_id=batch_name,
+            message="batch_start",
+            item_index=1,
+            item_total=item_total,
+        )
         for i, t in enumerate(this_batch):
-            item = process_target(t, cfg, batch_dir, batch_index + i + 1)
+            item = process_target(
+                t,
+                cfg,
+                batch_dir,
+                batch_index + i + 1,
+                logger=logger,
+                batch_id=batch_name,
+                item_index=i + 1,
+                item_total=item_total,
+            )
             batch_items.append(item)
             all_items.append(item)
-        manifest = write_batch(batch_items, batch_dir, cfg)
+        fetched = sum(1 for it in batch_items if isinstance(it, dict) and it.get("status") == "fetched")
+        logger.log(
+            "INFO",
+            "crawl",
+            batch_id=batch_name,
+            message="batch_crawl_complete",
+            items_fetched=fetched,
+            items_total=item_total,
+        )
+        manifest = write_batch(batch_items, batch_dir, cfg, logger=logger)
 
         qa_ok = manifest.get("qa", {}).get("qa_status") == "PASS"
         if cfg.commit and (qa_ok or cfg.force_commit):
@@ -1292,7 +1383,7 @@ def run_pipeline(cfg: argparse.Namespace) -> Dict[str, object]:
             )
 
         if cfg.sync_feishu:
-            sync_report = sync_to_feishu(manifest, cfg, batch_dir, out_root)
+            sync_report = sync_to_feishu(manifest, cfg, batch_dir, out_root, logger=logger)
             manifest["feishu"] = sync_report
             if sync_report.get("status") in {"FAIL", "PARTIAL", "BLOCKED"}:
                 manifest.setdefault("qa", {}).setdefault("errors", []).append(
@@ -1325,6 +1416,15 @@ def run_pipeline(cfg: argparse.Namespace) -> Dict[str, object]:
     }
     summary_path = out_root / "pipeline_summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.log(
+        "INFO" if summary["overall_status"] == "PASS" else "ERROR",
+        "discover",
+        message="pipeline_complete",
+        overall_status=summary["overall_status"],
+        batch_count=summary["batch_count"],
+        failed_batches=summary["failed_batches"],
+        artifact_path=str(summary_path),
+    )
     return summary
 
 
@@ -1339,5 +1439,45 @@ def main() -> None:
         sys.exit(1)
 
 
+def _self_test_feishu_paths() -> None:
+    """Inline checks for folder mapping (no network)."""
+    cfg_folder = argparse.Namespace(feishu_doc_root_mode="agent-docs-folder")
+    cfg_parent = argparse.Namespace(feishu_doc_root_mode="parent")
+    url = "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices"
+    segs_folder = feishu_folder_segments(url, "platform_docs", cfg_folder)
+    full_folder = feishu_full_folder_path(segs_folder, cfg_folder)
+    expected_tail = "anthropic-docs/Anthropic/Developer-docs/agents-and-tools/agent-skills"
+    assert full_folder == f"agent-docs/{expected_tail}", full_folder
+    assert segs_folder == expected_tail.split("/"), segs_folder
+    segs_parent = feishu_folder_segments(url, "platform_docs", cfg_parent)
+    assert feishu_full_folder_path(segs_parent, cfg_parent) == f"agent-docs/{expected_tail}"
+    assert VENDOR_LIBRARIES["anthropic"]["status"] == "active"
+    for name in ("openai", "gemini", "cursor"):
+        assert VENDOR_LIBRARIES[name]["status"] == "reserved"
+    blog_url = "https://claude.com/blog/some-post"
+    blog_segs = feishu_folder_segments(blog_url, "", cfg_folder)
+    assert "Claude" in blog_segs and "Blog" in blog_segs
+    assert feishu_full_folder_path(blog_segs, cfg_folder).startswith(f"{AGENT_DOCS_ROOT}/")
+    sample_index = build_folder_index_markdown(
+        f"{AGENT_DOCS_ROOT}/anthropic-docs/Anthropic/Developer-docs/agents-and-tools/agent-skills",
+        [
+            {
+                "title": "技能编写最佳实践",
+                "source_url": url,
+                "selected_url": url,
+                "doc_url": "https://my.feishu.cn/docx/abc123",
+                "published_at": "2026-05-22T00:00:00+00:00",
+                "status": "ok-dry-run",
+            }
+        ],
+    )
+    assert "| 标题 | 原文链接 | 发布时间 | 飞书文档 | 状态 |" in sample_index
+    assert FEISHU_INDEX_DOC_TITLE in sample_index
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "--self-test-feishu-paths":
+        _self_test_feishu_paths()
+        print("[OK] feishu path self-test passed")
+    else:
+        main()

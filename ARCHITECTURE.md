@@ -138,42 +138,23 @@ agent-docs/
     content-quality-gate/
     vendor-onboarding/
     qa-triage/
-  agent_docs/                         # 确定性 Python 工具包
-    core/
-      config.py                       # 配置、路径、环境变量解析
-      models.py                       # Target、Artifact、QAResult、Vendor 定义
-      logging.py                      # PipelineLogger 与脱敏
-    vendors/
-      registry.py                     # VENDOR_LIBRARIES 与 vendor 状态
-      anthropic.py                    # Anthropic source discovery / URL mapping
-      openai.py                       # reserved
-      gemini.py                       # reserved
-      cursor.py                       # reserved
-    ingest/
-      discover.py                     # source discovery
-      fetch.py                        # HTTP fetch / retry / source capture
-      normalize.py                    # markdown/html 清洗与结构计数
-      media.py                        # 图片下载、本地化、images.json
-      translate.py                    # 中文优先与翻译适配
-    qa/
-      technical.py                    # 文件、结构、图片、链接等机器 QA
-      content.py                      # 内容 PASS：来源、语言、术语、可读性基础检查
-      reports.py                      # batch_qa_report / pipeline_summary
-    sinks/
-      feishu.py                       # 可选分发支线
-      git.py                          # 可选 artifact commit
-    cli/
-      anthropic.py                    # 兼容当前 anthropic CLI 参数
+  agent_docs/                         # 确定性 Python 工具包（Phase B/C 逐步落地）
+    core/                             # config, logging（active）
+    vendors/                          # registry（active）
+    ingest/                           # discovery, fetch, normalize, media, translate, process（active）
+    qa/                               # technical + content gates, batch runner（active）
+    sinks/                            # planned
+    cli/                              # planned
   scripts/
     anthropic_content_pipeline.py     # 兼容入口，逐步瘦身为 wrapper
 ```
 
 迁移策略：
 
-1. 先保持 `scripts/anthropic_content_pipeline.py` CLI 行为不变，新增 package 后由 wrapper 调用，避免破坏现有 npm scripts。
-2. 优先抽出低风险确定性模块：`PipelineLogger`、vendor registry、路径/配置、Feishu folder mapping、结构计数、图片处理。
-3. 再抽出 QA：将技术 QA 与内容 QA 分开报告，但保留 `batch_qa_report.json` 向后兼容字段。
-4. 最后抽出 source discovery / fetch / sync；每步迁移后运行 `python3 -m py_compile` 与 `npm run anthropic:crawl:smoke`。
+1. **Phase B（完成）**：`agent_docs/core`（config、logging）与 `agent_docs/vendors/registry` 已抽出；`scripts/anthropic_content_pipeline.py` 通过 import 使用，CLI 行为不变。
+2. **Phase C（进行中）**：`agent_docs/ingest/`（normalize、fetch、discover、media、translate、metadata、process）与 `agent_docs/qa/`（gates、runner）已抽出；HTTP/QA/翻译阈值等 magic values 收敛至 `agent_docs/core/config.py`；`batch_qa_report.json` 保留 `qa_status` 并新增 `technical_status`、`content_status`。
+3. 先保持 `scripts/anthropic_content_pipeline.py` CLI 行为不变，新增 package 后由 wrapper 调用，避免破坏现有 npm scripts。
+4. 下一步 Phase D：抽出 Feishu sync（`sinks/`）与 CLI wrapper；每步迁移后运行 `python3 -m py_compile` 与 `npm run anthropic:crawl:smoke`。
 5. 不在重构期引入新的商业化或学习路径逻辑；这些由 workflows/skills 规划，依赖稳定 source artifacts。
 
 ## 模块边界
