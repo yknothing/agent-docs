@@ -24,13 +24,13 @@ if [ $EXIT_CODE -ne 0 ]; then
   if printf '%s\n' "$OUTPUT" | grep -q "No permission to access"; then
     cat <<'MSG'
 
-[ERROR] 当前登录的飞书账号没有 CLI 访问权限。
-建议按以下顺序处理：
-1) 在浏览器确认账号是否为企业/组织账号，个人号（如 Feishu Personal User）通常不具备飞书 CLI 访问权限
-2) 执行 lark-cli auth logout 清理当前登录态
-3) 使用有权账号重新执行授权（可直接运行）
-   LARK_CLI_NO_PROXY=1 ALL_PROXY= HTTPS_PROXY= HTTP_PROXY= lark-cli auth login --recommend --domain all
-4) 如仍报错，请与企业管理员确认“应用权限审批/组织内应用允许列表”
+[ERROR] 当前飞书账号未完成 CLI 授权（No permission to access）。
+个人账号与企业账号均可接入；此报错通常不是“个人号不支持”，请按顺序排查：
+1) 执行 lark-cli auth logout 清理过期/错误登录态
+2) 禁用代理后重登: npm run feishu:auth:device:proxyless
+3) 浏览器确认完成对 cli_* 应用的授权（含文档等所需 scope）
+4) 若为企业租户，请管理员确认应用审批与组织内允许列表
+5) 验证: npm run feishu:check:full && lark-cli doctor
 MSG
   else
     echo "[ERROR] 鉴权失败。可尝试关闭代理后重试："

@@ -43,30 +43,50 @@ npm run feishu:auth       # 登录（交互）
 npm run feishu:check:auth  # 校验授权
 ```
 
-## 4.1 授权失败排查（No permission）
+## 4.1 身份模型（bot / user）
 
-你遇到的报错：
+`lark-cli auth status` 可能呈现两种就绪级别：
+
+| auth_level | 含义 | 典型场景 |
+|------------|------|----------|
+| `bot` | 应用已配置，仅有 bot/tenant 身份 | `config init` 完成，用户尚未 `auth login` |
+| `user` | 用户已完成 OAuth 登录 | 文档创建、需用户态 scope 的 API |
+
+**个人账号与企业账号均可完成 user 授权。** 勿将 `Feishu Personal User` 标签等同于“不可用”。
+
+本仓库 `npm run feishu:check:auth` 在 `bot` 与 `user` 两种级别下均可通过，但会提示是否缺少用户登录态。
+
+## 4.2 授权失败排查（No permission）
+
+示例报错：
 
 > No permission to access  
-> The current account aicafe (Feishu Personal User) doesn't have permission for 飞书 CLI.
+> The current account ... (Feishu Personal User) doesn't have permission for 飞书 CLI.
 
-是账号权限问题，不是脚本本身问题。`aicafe` 是个人账号（Feishu Personal User），多数场景不具备 CLI 应用授权范围。
+**常见根因**（按频率）：
+
+1. **代理干扰 OAuth** — `ALL_PROXY` / Clash 等导致 token 交换失败
+2. **过期或错误登录态** — 需 `lark-cli auth logout` 后重登
+3. **浏览器未完成应用授权** — 未勾选/未确认 cli 应用 scope
+4. **企业租户策略** — 应用未审批、账号不在允许列表（企业场景）
 
 处理步骤（按顺序执行）：
 
-1. 停掉当前登录态（防止继续复用错误账号）
+1. 清理登录态
    ```bash
    lark-cli auth logout
    ```
-2. 用授权账号重登，禁用代理发起鉴权（避免 `ALL_PROXY` 把凭据走代理）
+2. 禁用代理重登
    ```bash
    npm run feishu:auth:device:proxyless
    ```
-3. 按浏览器提示完成授权后，恢复并验证
+3. 浏览器完成授权后验证
    ```bash
    npm run feishu:check:full
+   lark-cli auth list
+   lark-cli doctor
    ```
-4. 若仍失败，检查企业后台是否允许该账号接入飞书 CLI，并确认账号有企业身份或已加入目标租户。
+4. 企业租户仍失败时，请管理员检查应用审批与组织策略。
 
 临时可用状态命令：
 

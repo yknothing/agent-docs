@@ -27,7 +27,7 @@ else
   echo "[WARN] 未检测到 lark-cli。请先执行 npm run feishu:install。"
 fi
 
-for file in scripts/setup-feishu-cli.sh scripts/check-feishu-cli-auth.sh scripts/check-feishu-cli.sh docs/FEISHU_CLI_INTEGRATION.md; do
+for file in AGENTS.md ARCHITECTURE.md DEBUG.md EXPERIENCE.md scripts/setup-feishu-cli.sh scripts/check-feishu-cli-auth.sh scripts/check-feishu-cli.sh docs/FEISHU_CLI_INTEGRATION.md; do
   if [ ! -f "$file" ]; then
     echo "[ERROR] 缺少文件: $file"
     exit 1
