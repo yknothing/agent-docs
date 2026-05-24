@@ -29,12 +29,12 @@
 
 | 厂商库 | 飞书根 | 状态 |
 |--------|--------|------|
-| Anthropic | `anthropic-docs/` | **active**（`scripts/anthropic_content_pipeline.py`） |
+| Anthropic | `anthropic-docs/` | **active**（`agent_docs/cli/` + `scripts/anthropic_content_pipeline.py` 兼容入口） |
 | OpenAI | `openai-docs/` | reserved |
 | Gemini | `gemini-docs/` | reserved |
 | Cursor | `cursor-docs/` | reserved |
 
-代码侧注册表：`VENDOR_LIBRARIES`（`scripts/anthropic_content_pipeline.py`）。
+代码侧注册表：`VENDOR_LIBRARIES`（`agent_docs/vendors/registry.py`）。
 
 人类用户看 `README.md`；Agent 以本文 + `ARCHITECTURE.md` 为权威上下文。
 
@@ -48,8 +48,13 @@ agent-docs/
 ├── EXPERIENCE.md          # 经验沉淀（可追加）
 ├── README.md              # 人类快速开始
 ├── package.json           # npm 脚本入口
+├── workflows/
+│   └── stage1_source_library.md        # Stage 1 控制流程
+├── skills/                             # Stage 1 Agent Skills（source-discovery 等）
+├── agent_docs/                         # 确定性 Python 工具包（ingest/qa/sinks/cli）
+│   └── cli/                            # Stage 1 pipeline 编排
 ├── scripts/
-│   ├── anthropic_content_pipeline.py   # 抓取/翻译/QA/飞书同步主程序
+│   ├── anthropic_content_pipeline.py   # 兼容入口 wrapper
 │   ├── setup-feishu-cli.sh
 │   ├── check-feishu-cli.sh
 │   ├── check-feishu-cli-auth.sh
@@ -71,7 +76,7 @@ agent-docs/
 | 全量抓取 | discover → smoke → crawl | `npm run anthropic:discover` 等 |
 | QA 失败 | 读 `batch_qa_report.json` + `DEBUG.md` | 检查 `artifacts/.../batch-*/` |
 | 同步到飞书 | 必须 QA PASS（除非用户明确 `--force-sync`） | `npm run anthropic:sync-dryrun` 先于 execute |
-| 改流水线逻辑 | 读 `ARCHITECTURE.md`，改 `scripts/anthropic_content_pipeline.py` | smoke 验证 |
+| 改流水线逻辑 | 读 `ARCHITECTURE.md`，改 `agent_docs/` 对应模块 | smoke 验证 |
 
 ## 推荐工作流（Anthropic 流水线）
 

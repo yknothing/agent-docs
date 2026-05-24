@@ -1,6 +1,6 @@
 # Workflow: Stage 1 Source Library
 
-> 控制平面 workflow。确定性动作由 tools（`scripts/anthropic_content_pipeline.py` 及未来 `agent_docs/`）执行；开放性判断由 Agent Skills 承担。  
+> 控制平面 workflow。确定性动作由 tools（`agent_docs/cli/`、`scripts/anthropic_content_pipeline.py` 兼容入口）执行；开放性判断由 Agent Skills 承担。  
 > 架构权威：`ARCHITECTURE.md` | Codex 入口：`docs/CODEX_GOAL.md`
 
 ## 目标
@@ -142,14 +142,14 @@ Feishu D1/D2 **不是** Stage 1 完成的必要条件。
 | 需新厂商 | Stage 2 vendor-onboarding；不在 Stage 1 强行扩展 |
 | 需商品化 | 转入 Stage 3 规划；不跳过 source library |
 
-## 相关 Skills（规划）
+## 相关 Skills（active）
 
-| Skill | 职责 |
-|-------|------|
-| `source-discovery` | 审阅 discover 范围与 vendor 来源 |
-| `content-quality-gate` | 内容 PASS 人工/模型辅助审校 |
-| `qa-triage` | QA 失败分类与修复路径 |
-| `vendor-onboarding` | Stage 2 新厂商接入 |
+| Skill | 路径 | 职责 |
+|-------|------|------|
+| `source-discovery` | `skills/source-discovery/SKILL.md` | 审阅 discover 范围与 vendor 来源 |
+| `content-quality-gate` | `skills/content-quality-gate/SKILL.md` | 内容 PASS 人工/模型辅助审校 |
+| `qa-triage` | `skills/qa-triage/SKILL.md` | QA 失败分类与修复路径 |
+| `vendor-onboarding` | Stage 2 规划 | 新厂商接入 |
 
 ## 参考
 
