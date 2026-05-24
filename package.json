@@ -18,7 +18,7 @@
     "feishu:setup": "bash scripts/setup-feishu-cli.sh",
     "anthropic:discover": "python3 scripts/anthropic_content_pipeline.py --discover-only --output-root artifacts/anthropic-discovery",
     "anthropic:crawl": "python3 scripts/anthropic_content_pipeline.py --batch-size 20 --output-root artifacts/anthropic-content",
-    "anthropic:crawl:smoke": "python3 scripts/anthropic_content_pipeline.py --max-items 5 --batch-size 5 --no-qa --translate-mode off --output-root artifacts/anthropic-content-smoke",
+    "anthropic:crawl:smoke": "python3 scripts/anthropic_content_pipeline.py --max-items 5 --batch-size 5 --no-qa --translate-mode off --output-root artifacts/anthropic-content-smoke --resume-output",
     "anthropic:commit": "python3 scripts/anthropic_content_pipeline.py --batch-size 20 --commit --output-root artifacts/anthropic-content",
     "anthropic:sync-dryrun": "python3 scripts/anthropic_content_pipeline.py --batch-size 20 --sync-feishu --output-root artifacts/anthropic-content",
     "anthropic:sync": "python3 scripts/anthropic_content_pipeline.py --batch-size 20 --sync-feishu --execute-feishu --output-root artifacts/anthropic-content"
