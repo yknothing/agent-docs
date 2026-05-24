@@ -143,19 +143,25 @@ agent-docs/
     vendors/                          # registry（active）
     ingest/                           # discovery, fetch, normalize, media, translate, process（active）
     qa/                               # technical + content gates, batch runner（active）
-    sinks/                            # planned
-    cli/                              # planned
+    sinks/                            # Feishu sync（active）
+    cli/                              # Anthropic pipeline CLI（active）
   scripts/
-    anthropic_content_pipeline.py     # 兼容入口，逐步瘦身为 wrapper
+    anthropic_content_pipeline.py     # 兼容入口 wrapper（~20 行）
+  skills/
+    source-discovery/SKILL.md         # active
+    content-quality-gate/SKILL.md     # active
+    qa-triage/SKILL.md                # active
 ```
 
 迁移策略：
 
 1. **Phase B（完成）**：`agent_docs/core`（config、logging）与 `agent_docs/vendors/registry` 已抽出；`scripts/anthropic_content_pipeline.py` 通过 import 使用，CLI 行为不变。
-2. **Phase C（进行中）**：`agent_docs/ingest/`（normalize、fetch、discover、media、translate、metadata、process）与 `agent_docs/qa/`（gates、runner）已抽出；HTTP/QA/翻译阈值等 magic values 收敛至 `agent_docs/core/config.py`；`batch_qa_report.json` 保留 `qa_status` 并新增 `technical_status`、`content_status`。
-3. 先保持 `scripts/anthropic_content_pipeline.py` CLI 行为不变，新增 package 后由 wrapper 调用，避免破坏现有 npm scripts。
-4. 下一步 Phase D：抽出 Feishu sync（`sinks/`）与 CLI wrapper；每步迁移后运行 `python3 -m py_compile` 与 `npm run anthropic:crawl:smoke`。
-5. 不在重构期引入新的商业化或学习路径逻辑；这些由 workflows/skills 规划，依赖稳定 source artifacts。
+2. **Phase C（完成）**：`agent_docs/ingest/`（normalize、fetch、discover、media、translate、metadata、process）与 `agent_docs/qa/`（gates、runner）已抽出；HTTP/QA/翻译阈值等 magic values 收敛至 `agent_docs/core/config.py`；`batch_qa_report.json` 保留 `qa_status` 并新增 `technical_status`、`content_status`。
+3. **Phase D（完成）**：`agent_docs/sinks/feishu.py` 已抽出（folder mapping、import payload、lark-cli sync、path self-test）；`scripts/anthropic_content_pipeline.py` 通过 `agent_docs.sinks` 调用，CLI 行为不变。
+4. 先保持 `scripts/anthropic_content_pipeline.py` CLI 行为不变，新增 package 后由 wrapper 调用，避免破坏现有 npm scripts。
+5. **Phase E（完成）**：`agent_docs/cli/anthropic.py` 承载 discover/crawl/QA/sync 编排；`scripts/anthropic_content_pipeline.py` 瘦身为兼容 wrapper；Stage 1 skills（`source-discovery`、`content-quality-gate`、`qa-triage`）落地于 `skills/`。
+6. 每步迁移后运行 `python3 -m py_compile` 与 `npm run anthropic:crawl:smoke`。
+7. 不在重构期引入新的商业化或学习路径逻辑；这些由 workflows/skills 规划，依赖稳定 source artifacts。
 
 ## 模块边界
 
@@ -170,7 +176,7 @@ Stage 1 模块按数据流单向依赖，避免 Feishu、商品化或分析逻�
 | Translation / Chinese-first | `pick_preferred_source_url`, `translate_markdown` | 中文优先与必要翻译 | 依赖 normalized content |
 | QA | `run_qa` | 技术 PASS 与内容 PASS 的机器门禁 | 依赖 artifacts，不依赖 Feishu |
 | Observability | `PipelineLogger`, reports | 记录进度、错误、可重放证据 | 横切模块，不记录 secrets |
-| Distribution | `sync_to_feishu` | 可选 Feishu dry-run / execute | 只能依赖 QA PASS 后 artifacts |
+| Distribution | `agent_docs/sinks/feishu.py` (`sync_to_feishu`) | 可选 Feishu dry-run / execute | 只能依赖 QA PASS 后 artifacts |
 | Learning/product layers | planned docs/modules | 主题索引、学习路径、商品化 | 后续阶段依赖 source library，不反向修改源材料 |
 
 核心依赖规则：`source collection → QA → optional distribution → future learning/product layers`。任何新功能若要求从后续层反向改变源材料归档，应先记录架构决策。
@@ -459,7 +465,7 @@ batch-001/
 | 抓取逻辑 | `fetch_url`, `process_target` |
 | 翻译 | `translate_markdown`, `--translate-mode` |
 | QA 规则 | `run_qa` |
-| 飞书命令 | `sync_to_feishu`, `parse_doc_id_from_output` |
+| 飞书命令 | `agent_docs/sinks/feishu.py`（`sync_to_feishu`, `parse_doc_id_from_output`） |
 | CLI | `parse_args`, `main` |
 
 ## 与 Agent 文档的关系
