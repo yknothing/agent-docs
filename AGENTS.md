@@ -70,6 +70,7 @@ agent-docs/
 | 用户意图 | 优先动作 | 关键命令 |
 |----------|----------|----------|
 | Stage 1 资料收集完善 | 读 `workflows/stage1_source_library.md` + `ARCHITECTURE.md` | discover → smoke → crawl → QA |
+| 改代码前 / 完工后 | 跑测试 + lint + smoke | `pip install -e ".[dev]" && npm run lint:py && npm run test:py`；改 ingest/fetch 后再跑 `npm run anthropic:crawl:smoke` |
 | 安装/检查飞书 CLI | 读 `docs/FEISHU_CLI_INTEGRATION.md` §4.1 | `npm run feishu:check:full` |
 | 飞书登录失败 | 读 `DEBUG.md` → 飞书鉴权（非账号类型问题） | `npm run feishu:auth:device:proxyless` |
 | 验证抓取流程 | smoke，不跑 QA/翻译 | `npm run anthropic:crawl:smoke` |
@@ -149,6 +150,7 @@ flowchart LR
 
 | 脚本 | 作用 |
 |------|------|
+| `test:py` / `lint:py` | Python 单测 / ruff lint |
 | `feishu:install` / `feishu:setup` | 安装 CLI |
 | `feishu:config` | 交互式应用配置 |
 | `feishu:auth` / `feishu:auth:device:proxyless` | 登录 |
@@ -161,7 +163,8 @@ flowchart LR
 
 ## CI 边界
 
-`.github/workflows/feishu-cli-smoke.yml` 仅运行 `npm run feishu:check`（不要求飞书登录态）。不要在 CI 假设本地已有 `lark-cli` 授权。
+- `.github/workflows/python-ci.yml`：`ruff` + `pytest` + `py_compile` + `--self-test-feishu-paths`（Python 3.10 / 3.12）。
+- `.github/workflows/feishu-cli-smoke.yml`：仅 `npm run feishu:check`（不要求飞书登录态）。不要在 CI 假设本地已有 `lark-cli` 授权。
 
 ## 飞书接入验证
 

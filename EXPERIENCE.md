@@ -254,3 +254,48 @@
 <!-- 在此追加尚未完全验证的假设，验证后移到上方「已沉淀经验」 -->
 
 - Anthropic 源站结构变更时，需更新 `fetch_url` / markdown 解析逻辑（尚无固定监测手段，依赖 QA 计数下降报警）
+
+---
+
+### 2026-05-26 — P0 hardening pass（packaging + tests + secret scrubbing）
+
+**上下文**：外部代码 review 指出 0 测试、无 LICENSE、无 pyproject.toml、`_sanitize` 仅过滤 dict key 不扫描 value、ARCHITECTURE.md 描述已不存在的"1300+ 行单文件"等问题。
+
+**实施**（P0 hardening，**未改 crawl/QA/Feishu sync 主逻辑**；有意的运行时差异见下方第 5–7 点）：
+
+1. 加 `LICENSE`（MIT + 非商业内容免责声明）。
+2. 加 `pyproject.toml`：声明 `requires-python>=3.10`、`console_scripts`、`pytest`/`ruff` dev extras；引入 ruff 配置（当前 `E/F/W` only，避免 UP/B/SIM 大面积 churn）。
+3. 加 `tests/` 单测（约 86 passed + 1 xfailed），覆盖 `feishu_folder_segments`（URL → 文件夹段映射，含 parent/agent-docs-folder 两种模式 + 所有 vendor 分支）、`parse_doc_id_from_output`（lark-cli 输出解析的 6 种形态）、`parse_frontmatter`（已支持 + xfail 标记的已知限制）、`feishu_safe_name`、`pick_preferred_source_url`（mock 网络）、`extract_images`、`PipelineLogger` secret 脱敏。
+4. 加 `.github/workflows/python-ci.yml`：`ruff` + `py_compile` + `pytest` + `--self-test-feishu-paths`，Python 3.10 / 3.12 matrix。
+5. 强化 `PipelineLogger._sanitize`：除了过滤 dict key 名外，新增对 string value 的高置信度 secret 扫描（Bearer、`sk-`/`sk-ant-`、GitHub PAT、`cli_*` 飞书 app secret、URL credential 查询参、`authorization=`/`x-api-key=`/`app_secret=` 字面赋值）。**故意不做"长随机串"启发式**，以免误伤 `folder_token` / `doc_id` / `sha1` 等正常 debug 字段。
+6. `UA` header 改为 `agent-docs/0.1 (+https://github.com/yknothing/agent-docs)`，遵循"identify-yourself"礼节；减少被 WAF 误判风险。
+7. 删除死代码：`FEISHU_ALT_TEXT_MIN_LEN` / `FEISHU_ALT_TEXT_HINT_MAX_LEN`（未引用）、`agent_docs/__init__.py` 自动调用的 `sys.path` hack（脚本 wrapper 仍有；preferred `pip install -e .`）、`extract_images` 中 dead `seen` 变量与多余 dedup 循环、`normalize.py` 未用 `from pathlib import Path`。
+8. ARCHITECTURE.md：移除"约 1300+ 行"过时表述，扩展点表更新为 `agent_docs.*` 模块路径，新增 "Known Limitations" 节集中列出 8 项已识别但本轮不修复的限制。
+9. README.md：重排 Quick Start，把 "Stage 1 主线"（`anthropic:discover` → `crawl:smoke` → `crawl`）置于飞书安装之前；加非商业使用 disclaimer。
+10. 加 `skills/vendor-onboarding/SKILL.md` 作为 Stage 2 placeholder，消除"被引用但不存在"的死引用。
+11. 加 `CHANGELOG.md`（Keep-a-Changelog 格式）。
+
+**验证**：
+
+```bash
+pip install -e ".[dev]"
+python -m ruff check .                            # All checks passed
+npm run test:py                                   # 86 passed, 1 xfailed
+python -m pytest tests/ -ra                       # same
+python -m py_compile scripts/anthropic_content_pipeline.py
+python -m compileall -q agent_docs
+python scripts/anthropic_content_pipeline.py --self-test-feishu-paths   # [OK]
+npm run anthropic:crawl:smoke                                         # exit 0（新 UA 下 5 条抓取正常）
+```
+
+**未做**（留给下一轮）：
+
+- 拆分 `agent_docs/sinks/feishu.py`（1197 行 → 5 个文件）
+- 用 `markdown-it-py + beautifulsoup4` 替换正则 HTML/MD 解析
+- vendor 配置数据化（解硬编码 `feishu_folder_segments` 中的 vendor 分支）
+- QA v2：源 HTML 解析 vs final markdown 跨格式比对
+
+**预防**：
+
+- 之后任何对 `feishu_folder_segments` / `parse_doc_id_from_output` / `PipelineLogger` / `extract_images` / `feishu_safe_name` 的修改，**必须先看 `tests/test_*.py` 对应文件，新加 case 后再改实现**。
+- 改 secret 扫描规则要同步 `tests/test_pipeline_logger.py::TestValueScrubbing` 并保证不误伤现有 INFO 日志样本。

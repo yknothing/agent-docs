@@ -1,0 +1,5 @@
+# Dev dependencies for agent-docs.
+# Production runtime uses Python stdlib only (see pyproject.toml).
+pytest>=8
+pytest-cov>=5
+ruff>=0.5

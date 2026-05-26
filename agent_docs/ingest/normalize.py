@@ -9,7 +9,6 @@ import re
 import shutil
 import subprocess
 from email.utils import parsedate_to_datetime
-from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 import hashlib
 import urllib.parse

@@ -1,0 +1,45 @@
+name: Python CI
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package + dev extras
+        # `pip install -e .[dev]` covers pytest + ruff and registers the package
+        # so tests can `import agent_docs` without sys.path hacks.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: python -m ruff check .
+
+      - name: Byte-compile all modules
+        run: |
+          python -m py_compile scripts/anthropic_content_pipeline.py
+          python -m compileall -q agent_docs
+
+      - name: Feishu path self-test (no network)
+        run: python scripts/anthropic_content_pipeline.py --self-test-feishu-paths
+
+      - name: Run unit tests
+        run: python -m pytest tests/ -ra

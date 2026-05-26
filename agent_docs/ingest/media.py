@@ -22,26 +22,26 @@ from agent_docs.ingest.normalize import normalize_url
 
 
 def extract_images(markdown_text: str, base_url: str) -> List[Tuple[str, str]]:
+    """Extract unique (resolved_src, original_marker) tuples from markdown text.
+
+    Order is preserved (first occurrence wins). Both markdown ``![alt](src)``
+    and raw ``<img src=...>`` are supported.
+    """
     urls: List[Tuple[str, str]] = []
-    seen = set()
+    seen: set[str] = set()
     for m in re.finditer(r"!\[[^\]]*\]\(([^)]+)\)", markdown_text):
         src = normalize_url(base_url, m.group(1).strip())
-        if src not in seen:
-            seen.add(src)
+        if not src or src in seen:
+            continue
+        seen.add(src)
         urls.append((src, m.group(0)))
     for m in re.finditer(r"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>", markdown_text, re.IGNORECASE):
         src = normalize_url(base_url, m.group(1).strip())
-        if src not in seen:
-            seen.add(src)
-        urls.append((src, m.group(0)))
-    dedup: List[Tuple[str, str]] = []
-    seen = set()
-    for src, marker in urls:
-        if src in seen:
+        if not src or src in seen:
             continue
         seen.add(src)
-        dedup.append((src, marker))
-    return dedup
+        urls.append((src, m.group(0)))
+    return urls
 
 
 def infer_image_ext(content_type: str, source_url: str) -> str:

@@ -1,18 +1,15 @@
-"""Deterministic tools for the agent-docs source library pipeline."""
+"""Deterministic tools for the agent-docs source library pipeline.
+
+Preferred installation::
+
+    pip install -e ".[dev]"
+
+For backward compatibility with existing npm scripts,
+``scripts/anthropic_content_pipeline.py`` still injects the repository root
+onto ``sys.path`` so the wrapper works without ``pip install``.
+"""
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-
-def ensure_repo_root_on_path() -> Path:
-    """Insert repository root on sys.path so `agent_docs` imports work without install."""
-    root = Path(__file__).resolve().parent.parent
-    root_str = str(root)
-    if root_str not in sys.path:
-        sys.path.insert(0, root_str)
-    return root
-
-
-ensure_repo_root_on_path()
+__version__ = "0.1.0"
+__all__ = ["__version__"]

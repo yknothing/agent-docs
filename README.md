@@ -4,9 +4,11 @@
 
 当前 Stage 1 聚焦开发资料源材料的高质量收集与完善；Feishu 同步是资料 PASS 后的可选分发支线，后续再规划跨厂商 taxonomy、学习路径、深度分析与商品化。
 
+> ⚠️ **使用边界**：本仓库是抓取/规范化/分发的**工具链**。它抓取的官方文档与博客（anthropic.com / claude.com / platform.claude.com / code.claude.com 等）版权归原作者所有，**仅供个人或团队学习参考**。本仓库 LICENSE 是 MIT，但**不授予**对抓取内容的任何转售、再分发或商业打包许可。任何 "Stage 3 Productization" 必须在执行前完成独立的版权审查。
+
 | 厂商库 | 飞书根 | 状态 |
 |--------|--------|------|
-| Anthropic | `anthropic-docs/` | **active**（`scripts/anthropic_content_pipeline.py`） |
+| Anthropic | `anthropic-docs/` | **active**（`agent_docs/cli/` + `scripts/anthropic_content_pipeline.py` 兼容入口） |
 | OpenAI | `openai-docs/` | reserved |
 | Gemini | `gemini-docs/` | reserved |
 | Cursor | `cursor-docs/` | reserved |
@@ -24,7 +26,38 @@
 | [DEBUG.md](./DEBUG.md) | 分场景排障与验证清单 |
 | [EXPERIENCE.md](./EXPERIENCE.md) | 踩坑与决策记录（可追加） |
 
-## 快速开始
+## 安装
+
+```bash
+# 推荐：editable install（之后可 `python -m agent_docs.cli ...` 直接使用）
+pip install -e ".[dev]"
+
+# 改 Python 代码后
+npm run lint:py
+npm run test:py
+```
+
+未安装时也可直接通过 `python3 scripts/anthropic_content_pipeline.py ...` 运行，wrapper 会自动注入 sys.path。
+
+## Stage 1 主线快速开始（资料收集）
+
+> Stage 1 的成功标准是**技术 PASS + 内容 PASS**，与飞书同步无关。
+
+```bash
+# 1) 发现 URL 范围（核验 scope）
+npm run anthropic:discover
+
+# 2) 小规模 smoke（5 条、无 QA、无翻译）
+npm run anthropic:crawl:smoke
+
+# 3) 全量抓取 + QA
+npm run anthropic:crawl
+
+# 4) 查看 QA 结果
+cat artifacts/anthropic-content/batch-001/batch_qa_report.json
+```
+
+## 可选支线：飞书 CLI 接入（仅当需要同步分发时）
 
 ```bash
 # 安装飞书 CLI（官方推荐）

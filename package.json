@@ -16,6 +16,8 @@
     "feishu:check:full": "bash scripts/check-feishu-cli.sh && bash scripts/check-feishu-cli-auth.sh",
     "feishu:doctor": "lark-cli doctor",
     "feishu:setup": "bash scripts/setup-feishu-cli.sh",
+    "test:py": "python3 -m pytest tests/ -ra",
+    "lint:py": "python3 -m ruff check .",
     "anthropic:discover": "python3 scripts/anthropic_content_pipeline.py --discover-only --output-root artifacts/anthropic-discovery",
     "anthropic:crawl": "python3 scripts/anthropic_content_pipeline.py --batch-size 20 --output-root artifacts/anthropic-content",
     "anthropic:crawl:smoke": "python3 scripts/anthropic_content_pipeline.py --max-items 5 --batch-size 5 --no-qa --translate-mode off --output-root artifacts/anthropic-content-smoke --resume-output",

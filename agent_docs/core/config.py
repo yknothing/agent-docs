@@ -1,6 +1,6 @@
 """Shared pipeline configuration and constants."""
 
-UA = "Mozilla/5.0 (compatible; AnthropicContentPipeline/1.0)"
+UA = "agent-docs/0.1 (+https://github.com/yknothing/agent-docs)"
 DEFAULT_BATCH_SIZE = 20
 DEFAULT_TRANSLATE_TIMEOUT = 120
 DEFAULT_OUTPUT_ROOT = "artifacts/anthropic-content"
@@ -20,8 +20,6 @@ FEISHU_DOC_LOCALE_PREFIXES = {"en", "zh-cn", "zh", "zh-hans", "ja", "ko", "fr", 
 FEISHU_EXCLUDED_URL_PATHS = ("/resources/courses",)
 FEISHU_MEDIA_CAPTION_MAX_LEN = 200
 FEISHU_FOLDER_TOKEN_HASH_LEN = 8
-FEISHU_ALT_TEXT_MIN_LEN = 8
-FEISHU_ALT_TEXT_HINT_MAX_LEN = 24
 FEISHU_ERROR_SNIPPET_MAX_LEN = 300
 FEISHU_SAFE_NAME_MAX_LEN = 80
 FEISHU_VERIFY_RAW_SNIPPET_MAX_LEN = 500

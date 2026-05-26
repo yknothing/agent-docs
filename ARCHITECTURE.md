@@ -278,7 +278,23 @@ npm 脚本是唯一推荐入口；Agent 应优先 `npm run feishu:*` 而非直�
 
 ### 2. Anthropic 内容流水线
 
-**单文件实现**：`scripts/anthropic_content_pipeline.py`（约 1300+ 行）
+**模块化实现**（自 2026-05 Phase B–E 重构后）：
+
+| 责任 | 模块 |
+|------|------|
+| CLI 编排（discover/crawl/QA/sync 触发） | `agent_docs/cli/anthropic.py` |
+| 来源发现 | `agent_docs/ingest/discover.py` |
+| 抓取与单篇处理 | `agent_docs/ingest/fetch.py`、`agent_docs/ingest/process.py` |
+| 规范化（URL、markdown、HTML、frontmatter） | `agent_docs/ingest/normalize.py` |
+| 图片本地化 | `agent_docs/ingest/media.py` |
+| 翻译与中文优先 URL 选择 | `agent_docs/ingest/translate.py` |
+| Metadata 写入 | `agent_docs/ingest/metadata.py` |
+| QA 门禁与汇总 | `agent_docs/qa/gates.py`、`agent_docs/qa/runner.py` |
+| Feishu 分发 sink | `agent_docs/sinks/feishu.py` |
+| 配置常量与日志 | `agent_docs/core/config.py`、`agent_docs/core/logging.py` |
+| 厂商注册表 | `agent_docs/vendors/registry.py` |
+
+`scripts/anthropic_content_pipeline.py` 现为 **~20 行兼容 wrapper**，仅承担两个职责：保留 npm scripts 入口、把 repo root 加到 sys.path（无需 `pip install` 即可运行）。**真实实现已不在此文件中**；改流水线行为时定位到对应 `agent_docs/` 模块。
 
 #### 2.1 目标发现 `build_targets` / `discover_only`
 
@@ -459,14 +475,29 @@ batch-001/
 
 改行为时优先定位：
 
-| 需求 | 函数/区域 |
-|------|-----------|
-| 新增来源 | `build_targets`, `ALLOWED_*` 常量 |
-| 抓取逻辑 | `fetch_url`, `process_target` |
-| 翻译 | `translate_markdown`, `--translate-mode` |
-| QA 规则 | `run_qa` |
-| 飞书命令 | `agent_docs/sinks/feishu.py`（`sync_to_feishu`, `parse_doc_id_from_output`） |
-| CLI | `parse_args`, `main` |
+| 需求 | 模块 / 函数 |
+|------|-------------|
+| 新增来源 | `agent_docs/ingest/discover.py::build_targets`、`agent_docs/core/config.py` 中 `ALLOWED_SITEMAP_PREFIXES` / `ALLOWED_DOC_HOSTS` 等 |
+| 抓取逻辑 | `agent_docs/ingest/fetch.py::fetch_url`、`agent_docs/ingest/process.py::process_target` |
+| 翻译 | `agent_docs/ingest/translate.py::call_translator`、CLI `--translate-mode` |
+| QA 规则 | `agent_docs/qa/gates.py::run_technical_qa_item` / `run_content_qa_item`、`agent_docs/qa/runner.py::run_qa` |
+| 飞书命令 | `agent_docs/sinks/feishu.py`（`sync_to_feishu`, `parse_doc_id_from_output`, `feishu_folder_segments`） |
+| CLI 参数 | `agent_docs/cli/anthropic.py::parse_args` / `main` |
+
+## Known Limitations
+
+下列限制已被识别并由测试或文档固化。当下不修复，但所有改动需保留这一列表的诚实性：
+
+| 限制 | 影响范围 | 计划/工单 |
+|------|----------|-----------|
+| `parse_frontmatter` 仅支持扁平 key:value YAML 子集（无 list / nested mapping / 多行字符串） | `extract_publication_time` 解析外部 markdown frontmatter；自写的 metadata 受控不受影响 | `tests/test_parse_frontmatter.py` 固定行为；如需提升，引入 `pyyaml` |
+| `html_to_markdown` 在缺少系统 `html2text` 时回退到 regex 简单实现 | 跨机器输出不完全一致；下游 `count_*` QA 是同一份产物自比，因此差异为 0；但绝对结构保真度有限 | 引入 `markdown-it-py + beautifulsoup4` 之前禁止把 count delta 当作"和源 HTML 比对"的强信号 |
+| QA `image_count_delta` / `table_count_delta` 等比较的是流水线自身两个阶段（rewrite 前后或翻译前后） | 信号偏弱；可检出"翻译丢段/丢表"，**不能**检出 HTML→MD 阶段就丢了的结构 | Stage 2 引入跨格式 source-of-truth 比对 |
+| `extract_main_article_html` 用非贪婪正则匹配第一个 `<article>` | 嵌套或多 `<article>`（评论卡/推荐卡）页面可能截断主文 | 引入 `beautifulsoup4` 后切换为语义解析 |
+| 无 HTTP 429 专用退避；线性 sleep | 限流时同步 sync 易堆栈失败 | `<rate_limits_and_performance>` 已记录；待加 `urllib3` 或 `httpx` |
+| `feishu_folder_segments` 硬编码 vendor 分支（platform/code/anthropic.com/claude.com） | 多厂商扩展时需要修改函数本体 | Stage 2 `vendor-onboarding` skill 落地时改为数据驱动；见 `skills/vendor-onboarding/SKILL.md` |
+| `PipelineLogger._sanitize` 基于高置信度模式扫描 secret，不做"长随机串"启发式 | 自定义 token 命名格式（如 `MY_CO_PREFIX_xxx`）可能漏过 | 加新模式时同步更新 `tests/test_pipeline_logger.py` |
+| 无并发抓取 | 单线程吞吐受限 | 设计取舍，见 `<rate_limits_and_performance>` |
 
 ## 与 Agent 文档的关系
 
