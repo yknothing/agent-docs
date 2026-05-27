@@ -1,0 +1,22 @@
+---
+description: agent-docs 仓库 Agent 工作约定与文档入口
+alwaysApply: true
+---
+
+# agent-docs Agent 约定
+
+多厂商 AI/Agent 技术资料库（Anthropic active；OpenAI/Gemini/Cursor reserved）。开始任务前阅读仓库根目录 `AGENTS.md`。
+
+- 架构与数据流：`ARCHITECTURE.md`
+- 排障：`DEBUG.md`
+- 经验沉淀：`EXPERIENCE.md`
+- 飞书接入细节：`docs/FEISHU_CLI_INTEGRATION.md`
+
+约束摘要：
+
+- 不提交密钥；不擅自 git commit/push
+- 改流水线后：`lint:py` → `test:py` → `anthropic:crawl:smoke`；改 ingest/QA 后再跑 `anthropic:verify:qa`
+- QA 未 PASS 时不使用 `--force-sync` / `--force-commit`，除非用户明确要求
+- 飞书 OAuth 需用户浏览器完成，使用 `feishu:auth:device:proxyless`
+- 个人账号与企业账号均可接入；勿将 No permission 误判为个人号不支持
+- `FEISHU_DOC_FOLDER_TOKEN` 指向名为 `agent-docs` 的文件夹；sync report `folder_path` 含 `agent-docs/` 完整前缀
