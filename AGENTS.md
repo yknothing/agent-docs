@@ -12,6 +12,7 @@
 | 4 | `EXPERIENCE.md` | 踩坑记录、历史决策、已知限制 |
 | 5 | `docs/FEISHU_CLI_INTEGRATION.md` | 飞书 CLI 接入细节 |
 | 6 | `README.md` | 面向人类的快速开始与命令表 |
+| 7 | `docs/adr/README.md` | 架构决策记录（ADR）；Accepted ADR 为目标态，实现渐进落地 |
 
 ## 仓库目标
 
