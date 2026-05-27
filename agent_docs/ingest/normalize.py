@@ -70,14 +70,22 @@ def safe_slug(url: str, max_len: int = DEFAULT_SLUG_MAX_LEN) -> str:
     return slug
 
 
+def sanitize_url(url: str) -> str:
+    """Remove line-break artifacts from URLs (e.g. html2text soft wraps)."""
+    if not url:
+        return url
+    return re.sub(r"\s+", "", url.strip())
+
+
 def normalize_url(base: str, url: str) -> str:
     if not url:
         return url
-    if url.startswith("http://") or url.startswith("https://"):
-        return url
-    if url.startswith("//"):
-        return f"https:{url}"
-    return urllib.parse.urljoin(base, url)
+    cleaned = sanitize_url(url)
+    if cleaned.startswith("http://") or cleaned.startswith("https://"):
+        return cleaned
+    if cleaned.startswith("//"):
+        return f"https:{cleaned}"
+    return urllib.parse.urljoin(base, cleaned)
 
 
 def has_chinese(text: str) -> bool:

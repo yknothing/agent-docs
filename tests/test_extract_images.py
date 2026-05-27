@@ -41,6 +41,18 @@ class TestExtractImages:
     def test_no_images(self) -> None:
         assert extract_images("plain text", "https://example.com") == []
 
+    def test_html_image_src_with_line_break(self) -> None:
+        md = "<img src='https://www-\ncdn.anthropic.com/static/images/foo.svg' alt='x'>"
+        imgs = extract_images(md, "https://example.com")
+        assert len(imgs) == 1
+        assert imgs[0][0] == "https://www-cdn.anthropic.com/static/images/foo.svg"
+
+    def test_markdown_image_url_with_line_break(self) -> None:
+        md = "![alt](https://www-\ncdn.anthropic.com/static/images/foo.png)"
+        imgs = extract_images(md, "https://example.com")
+        assert len(imgs) == 1
+        assert imgs[0][0] == "https://www-cdn.anthropic.com/static/images/foo.png"
+
 
 class TestInferImageExt:
     def test_from_url_suffix(self) -> None:

@@ -55,10 +55,16 @@ def fetch_url(url: str, timeout: int = DEFAULT_HTTP_TIMEOUT) -> Tuple[Optional[s
     if not url:
         return None, None
     status = HTTP_SUCCESS_STATUS
+    content_type: Optional[str] = None
+    text = ""
     for attempt in range(HTTP_FETCH_MAX_ATTEMPTS):
         try:
             status, content_type, text = http_get(url, timeout=timeout)
-            break
+            if text:
+                break
+            if attempt == HTTP_FETCH_LAST_ATTEMPT_INDEX:
+                break
+            time.sleep(HTTP_FETCH_RETRY_BASE_SLEEP_SEC + attempt)
         except urllib.error.HTTPError as e:
             if e.code in HTTP_REDIRECT_CODES:
                 location = e.headers.get("Location")
@@ -73,7 +79,7 @@ def fetch_url(url: str, timeout: int = DEFAULT_HTTP_TIMEOUT) -> Tuple[Optional[s
             if attempt == HTTP_FETCH_LAST_ATTEMPT_INDEX:
                 return None, None
             time.sleep(HTTP_FETCH_RETRY_BASE_SLEEP_SEC + attempt)
-    if status != HTTP_SUCCESS_STATUS:
+    if status != HTTP_SUCCESS_STATUS or not text:
         return None, None
     if content_type:
         return text, content_type
@@ -84,10 +90,16 @@ def fetch_bytes(url: str, timeout: int = DEFAULT_HTTP_TIMEOUT) -> Tuple[Optional
     if not url:
         return None, None
     status = HTTP_SUCCESS_STATUS
+    content_type: Optional[str] = None
+    data = b""
     for attempt in range(HTTP_FETCH_MAX_ATTEMPTS):
         try:
             status, content_type, data = http_get_bytes(url, timeout=timeout)
-            break
+            if data:
+                break
+            if attempt == HTTP_FETCH_LAST_ATTEMPT_INDEX:
+                break
+            time.sleep(HTTP_FETCH_RETRY_BASE_SLEEP_SEC + attempt)
         except urllib.error.HTTPError as e:
             if e.code in HTTP_REDIRECT_CODES:
                 location = e.headers.get("Location")
@@ -102,7 +114,7 @@ def fetch_bytes(url: str, timeout: int = DEFAULT_HTTP_TIMEOUT) -> Tuple[Optional
             if attempt == HTTP_FETCH_LAST_ATTEMPT_INDEX:
                 return None, None
             time.sleep(HTTP_FETCH_RETRY_BASE_SLEEP_SEC + attempt)
-    if status != HTTP_SUCCESS_STATUS:
+    if status != HTTP_SUCCESS_STATUS or not data:
         return None, None
     return data, content_type
 

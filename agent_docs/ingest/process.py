@@ -65,14 +65,10 @@ def process_target(
     title = safe_slug(source_url)
     log_ctx = {"batch_id": batch_id, "item_index": item_index, "item_total": item_total, "source_url": source_url}
 
-    source_language_hint = detect_source_language_by_url(source_url)
     selected_url = source_url
     has_zh_version = False
     if source_type != "anthropic_news":
-        if source_language_hint == "en":
-            selected_url = source_url
-        else:
-            selected_url, has_zh_version = pick_preferred_source_url(source_url)
+        selected_url, has_zh_version = pick_preferred_source_url(source_url)
 
     raw_content, raw_ct = fetch_url(selected_url)
     if has_zh_version and is_not_found_text(raw_content or "", extract_title(raw_content or "")):
@@ -130,8 +126,9 @@ def process_target(
     if not raw_markdown or is_not_found_text(raw_markdown, title) or is_content_too_short(raw_markdown):
         status = CRAWL_STATUS_FAILED_EMPTY
 
-    if source_language_hint in {"zh", "en"}:
-        source_lang = source_language_hint
+    selected_lang_hint = detect_source_language_by_url(selected_url)
+    if selected_lang_hint in {"zh", "en"}:
+        source_lang = selected_lang_hint
     else:
         source_lang = "zh" if has_chinese(raw_markdown) else "en"
     source_image_refs = extract_images(raw_markdown, raw_source)
