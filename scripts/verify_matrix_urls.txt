@@ -1,0 +1,9 @@
+# Representative QA verify matrix (~5–10 URLs). One URL per line; # comments allowed.
+# Covers: platform docs (en → zh-CN auto), engineering article, news with images, code docs, structured markdown.
+
+https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices.md
+https://www.anthropic.com/engineering/building-effective-agents
+https://www.anthropic.com/news/introducing-the-anthropic-economic-futures-program
+https://code.claude.com/docs/en/best-practices.md
+https://platform.claude.com/docs/en/build-with-claude/overview.md
+https://www.anthropic.com/economic-futures
