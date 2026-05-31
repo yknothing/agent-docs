@@ -4,15 +4,25 @@ Agent 排障手册。按症状查找；修复后把可复用结论写入 `EXPERI
 
 ## 验证清单（改代码后）
 
+标准顺序（日常 / post-ingest）：
+
 ```bash
-# 1) 飞书接入文件完整性（CI 同款）
-npm run feishu:check
+# 1) Python lint + 单测（无网络）
+npm run lint:py
+npm run test:py
 
-# 2) Python 语法
-python3 -m py_compile scripts/anthropic_content_pipeline.py
-
-# 3) 流水线 smoke（网络依赖，5 条、无 QA/翻译）
+# 2) 流水线 smoke（网络依赖，5 条、无 QA/翻译）
 npm run anthropic:crawl:smoke
+
+# 3) 改 ingest / QA 逻辑后：代表性 URL 矩阵 + QA
+npm run anthropic:verify:qa
+# 检查 artifacts/anthropic-content-verify/batch-*/batch_qa_report.json → qa_status: PASS
+```
+
+飞书接入文件完整性（CI 同款，改飞书脚本时）：
+
+```bash
+npm run feishu:check
 ```
 
 飞书接入验证（推荐顺序）：

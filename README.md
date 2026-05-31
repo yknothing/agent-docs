@@ -50,12 +50,14 @@ npm run anthropic:discover
 # 2) 小规模 smoke（5 条、无 QA、无翻译）
 npm run anthropic:crawl:smoke
 
-# 3) 全量抓取 + QA
-npm run anthropic:crawl
+# 3) 代表性矩阵 + QA（日常/post-ingest 验证；非全量 crawl）
+npm run anthropic:verify:qa
 
 # 4) 查看 QA 结果
-cat artifacts/anthropic-content/batch-001/batch_qa_report.json
+cat artifacts/anthropic-content-verify/batch-001/batch_qa_report.json
 ```
+
+**全量抓取**（`npm run anthropic:crawl`）仅用于生产交付或发布前手动压测，不是日常验证路径。跑全量前应先 `verify:qa` PASS。
 
 ## 可选支线：飞书 CLI 接入（仅当需要同步分发时）
 
@@ -105,16 +107,19 @@ npm run anthropic:discover
 # 2) 小规模验证（5 条，跳过 QA，关闭翻译）
 npm run anthropic:crawl:smoke
 
-# 3) 全量抓取（默认分批；任一批 QA FAIL 时命令退出非 0）
+# 3) 代表性矩阵 + QA（~6 URL，batch-size 5；日常/post-ingest）
+npm run anthropic:verify:qa
+
+# 4) 全量抓取（生产交付 / 手动压测 ONLY；非日常 E2E）
 npm run anthropic:crawl
 
-# 4) 全量抓取并自动提交（QA 通过才提交；支持 --force-commit 覆盖）
+# 5) 全量抓取并自动提交（QA 通过才提交；支持 --force-commit 覆盖）
 npm run anthropic:commit
 
-# 5) 飞书同步 dry-run（只生成命令稿；状态为 DRY_RUN，不代表已上传）
+# 6) 飞书同步 dry-run（只生成命令稿；状态为 DRY_RUN，不代表已上传）
 npm run anthropic:sync-dryrun
 
-# 6) 飞书同步执行（依赖 lark-cli、token，且默认要求 QA PASS）
+# 7) 飞书同步执行（依赖 lark-cli、token，且默认要求 QA PASS）
 npm run anthropic:sync
 ```
 
@@ -128,15 +133,18 @@ npm run anthropic:sync
   - `feishu_sync_commands.sh`（可复现的同步命令文件；dry-run 生成，execute 才实际上传）
 - 建议执行流：
   - 先跑 `anthropic:discover`（确认范围）
-  - 再跑 `anthropic:crawl:smoke`（验证流程）
-  - 再跑 `anthropic:crawl`
-  - 检查 `batch_qa_report.json`，通过后再 `anthropic:commit`
+  - 再跑 `anthropic:crawl:smoke`（验证抓取链路）
+  - 再跑 `anthropic:verify:qa`（代表性矩阵 + QA）
+  - 检查 `artifacts/anthropic-content-verify/batch_qa_report.json`，通过后再考虑全量 `anthropic:crawl`（生产/压测）
+  - 生产 output 通过后再 `anthropic:commit`
   - 通过后再 `anthropic:sync-dryrun` / `anthropic:sync`
   - 只有明确接受风险时才使用 `--force-sync` 或 `--allow-failures`
 
 ### 产物结构
 
-默认输出目录：`artifacts/anthropic-content`（可通过 `--output-root` 覆盖）
+默认输出目录：
+- 日常 QA 验证：`artifacts/anthropic-content-verify`（`anthropic:verify:qa`）
+- 生产全量：`artifacts/anthropic-content`（`anthropic:crawl`；可通过 `--output-root` 覆盖）
 
 ```bash
 batch-001/

@@ -56,6 +56,8 @@ agent-docs/
 │   └── cli/                            # Stage 1 pipeline 编排
 ├── scripts/
 │   ├── anthropic_content_pipeline.py   # 兼容入口 wrapper
+│   ├── verify_matrix_urls.txt          # verify:qa 代表性 URL 矩阵
+│   ├── run_anthropic_verify_qa.sh      # verify:qa npm 脚本入口
 │   ├── setup-feishu-cli.sh
 │   ├── check-feishu-cli.sh
 │   ├── check-feishu-cli-auth.sh
@@ -70,12 +72,13 @@ agent-docs/
 
 | 用户意图 | 优先动作 | 关键命令 |
 |----------|----------|----------|
-| Stage 1 资料收集完善 | 读 `workflows/stage1_source_library.md` + `ARCHITECTURE.md` | discover → smoke → crawl → QA |
+| Stage 1 资料收集完善 | 读 `workflows/stage1_source_library.md` + `ARCHITECTURE.md` | discover → smoke → verify:qa |
 | 改代码前 / 完工后 | 跑测试 + lint + smoke | `pip install -e ".[dev]" && npm run lint:py && npm run test:py`；改 ingest/fetch 后再跑 `npm run anthropic:crawl:smoke` |
 | 安装/检查飞书 CLI | 读 `docs/FEISHU_CLI_INTEGRATION.md` §4.1 | `npm run feishu:check:full` |
 | 飞书登录失败 | 读 `DEBUG.md` → 飞书鉴权（非账号类型问题） | `npm run feishu:auth:device:proxyless` |
 | 验证抓取流程 | smoke，不跑 QA/翻译 | `npm run anthropic:crawl:smoke` |
-| 全量抓取 | discover → smoke → crawl | `npm run anthropic:discover` 等 |
+| ingest/QA 回归验证 | 代表性 URL 矩阵 + QA | `npm run anthropic:verify:qa` |
+| 全量生产交付 / 手动压测 | discover → smoke → verify:qa → crawl | `npm run anthropic:crawl`（**非**日常 E2E） |
 | QA 失败 | 读 `batch_qa_report.json` + `DEBUG.md` | 检查 `artifacts/.../batch-*/` |
 | 同步到飞书 | 必须 QA PASS（除非用户明确 `--force-sync`） | `npm run anthropic:sync-dryrun` 先于 execute |
 | 改流水线逻辑 | 读 `ARCHITECTURE.md`，改 `agent_docs/` 对应模块 | smoke 验证 |
@@ -85,22 +88,25 @@ agent-docs/
 ```mermaid
 flowchart LR
   A[discover] --> B[crawl:smoke]
-  B --> C[crawl]
+  B --> C[verify:qa]
   C --> D{QA PASS?}
   D -->|是| E[commit 可选]
   D -->|否| F[读 batch_qa_report.json 排障]
   E --> G[sync-dryrun]
   G --> H[sync execute]
+  C -.->|release only| I[anthropic:crawl 全量/压测]
 ```
 
-标准顺序：
+标准顺序（日常 / post-ingest）：
 
 1. `npm run anthropic:discover` — 确认 URL 范围
 2. `npm run anthropic:crawl:smoke` — 5 条、无 QA、无翻译
-3. `npm run anthropic:crawl` — 全量分批
-4. 检查 `artifacts/anthropic-content/batch-*/batch_qa_report.json`
-5. QA 通过后：`npm run anthropic:commit`（仅用户明确要求时）
+3. `npm run anthropic:verify:qa` — 代表性矩阵（~6 URL）、QA 开启 → `artifacts/anthropic-content-verify`
+4. 检查 `artifacts/anthropic-content-verify/batch-*/batch_qa_report.json`
+5. QA 通过后：`npm run anthropic:commit`（仅用户明确要求时；针对生产 output root）
 6. `npm run anthropic:sync-dryrun` → 用户确认 → `npm run anthropic:sync`
+
+**`npm run anthropic:crawl`（全量）**：仅用于生产交付或发布前手动容量/压力测试，**不是**日常 smoke/QA 路径。跑全量前应先 `verify:qa` PASS。
 
 ## 环境变量
 
@@ -157,8 +163,9 @@ flowchart LR
 | `feishu:auth` / `feishu:auth:device:proxyless` | 登录 |
 | `feishu:check` / `feishu:check:auth` / `feishu:check:full` | 环境与鉴权检查 |
 | `anthropic:discover` | 仅生成 URL 清单 |
-| `anthropic:crawl:smoke` | 小规模验证 |
-| `anthropic:crawl` | 全量抓取 + QA |
+| `anthropic:crawl:smoke` | 小规模验证（无 QA） |
+| `anthropic:verify:qa` | 代表性 URL 矩阵 + QA（日常/post-ingest） |
+| `anthropic:crawl` | **生产全量 / 手动压测**（非日常 E2E） |
 | `anthropic:commit` | QA 通过后 git commit batch |
 | `anthropic:sync-dryrun` / `anthropic:sync` | 飞书同步（dry-run / 执行） |
 
@@ -166,6 +173,7 @@ flowchart LR
 
 - `.github/workflows/python-ci.yml`：`ruff` + `pytest` + `py_compile` + `--self-test-feishu-paths`（Python 3.10 / 3.12）。
 - `.github/workflows/feishu-cli-smoke.yml`：仅 `npm run feishu:check`（不要求飞书登录态）。不要在 CI 假设本地已有 `lark-cli` 授权。
+- **`anthropic:verify:qa` 不在 CI 中跑网络 crawl**（依赖外网与耗时）；改 ingest/QA 后在本地执行。
 
 ## 飞书接入验证
 

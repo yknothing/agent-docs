@@ -87,12 +87,16 @@ python3 scripts/anthropic_content_pipeline.py \
   --resume-output
 ```
 
-改 ingest/QA 代码后**必须**：
+改 ingest/QA 代码后**必须**（按顺序）：
 
 ```bash
-python3 -m py_compile scripts/anthropic_content_pipeline.py agent_docs/cli/anthropic.py
+npm run lint:py
+npm run test:py
 npm run anthropic:crawl:smoke
+npm run anthropic:verify:qa
 ```
+
+检查 `artifacts/anthropic-content-verify/batch-*/batch_qa_report.json` → `qa_status: PASS`。
 
 ## 授权边界（必须遵守）
 
