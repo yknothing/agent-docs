@@ -55,19 +55,22 @@ def run_technical_qa_item(it: Dict[str, object], out_text: str) -> Tuple[List[st
     if not isinstance(it.get("table_count_source"), int):
         errors.append(f"{QA_ERR_BAD_TABLE_COUNT_SOURCE}: {source_url}")
 
-    deltas["image_count_delta"] = int(it.get("image_count_output", 0)) - int(it.get("image_count_source", 0))
-    deltas["table_count_delta"] = int(it.get("table_count_output", 0)) - int(it.get("table_count_source", 0))
-    deltas["heading_count_delta"] = int(it.get("heading_count_output", 0)) - int(it.get("heading_count_source", 0))
-    deltas["link_count_delta"] = int(it.get("link_count_output", 0)) - int(it.get("link_count_source", 0))
-
-    if int(it.get("image_count_output", 0)) < int(it.get("image_count_source", 0)):
-        errors.append(f"{QA_ERR_IMAGE_COUNT_DECREASE}: {source_url}")
-    if int(it.get("table_count_output", 0)) < int(it.get("table_count_source", 0)):
-        errors.append(f"{QA_ERR_TABLE_COUNT_DECREASE}: {source_url}")
-    if int(it.get("heading_count_output", 0)) < int(it.get("heading_count_source", 0)):
-        errors.append(f"{QA_ERR_HEADING_COUNT_DECREASE}: {source_url}")
-    if int(it.get("link_count_output", 0)) < int(it.get("link_count_source", 0)):
-        errors.append(f"{QA_ERR_LINK_COUNT_DECREASE}: {source_url}")
+    if isinstance(it.get("image_count_source"), int):
+        deltas["image_count_delta"] = int(it.get("image_count_output", 0)) - int(it.get("image_count_source", 0))
+        if int(it.get("image_count_output", 0)) < int(it.get("image_count_source", 0)):
+            errors.append(f"{QA_ERR_IMAGE_COUNT_DECREASE}: {source_url}")
+    if isinstance(it.get("table_count_source"), int):
+        deltas["table_count_delta"] = int(it.get("table_count_output", 0)) - int(it.get("table_count_source", 0))
+        if int(it.get("table_count_output", 0)) < int(it.get("table_count_source", 0)):
+            errors.append(f"{QA_ERR_TABLE_COUNT_DECREASE}: {source_url}")
+    if isinstance(it.get("heading_count_source"), int):
+        deltas["heading_count_delta"] = int(it.get("heading_count_output", 0)) - int(it.get("heading_count_source", 0))
+        if int(it.get("heading_count_output", 0)) < int(it.get("heading_count_source", 0)):
+            errors.append(f"{QA_ERR_HEADING_COUNT_DECREASE}: {source_url}")
+    if isinstance(it.get("link_count_source"), int):
+        deltas["link_count_delta"] = int(it.get("link_count_output", 0)) - int(it.get("link_count_source", 0))
+        if int(it.get("link_count_output", 0)) < int(it.get("link_count_source", 0)):
+            errors.append(f"{QA_ERR_LINK_COUNT_DECREASE}: {source_url}")
 
     for image in it.get("images", []):
         if not isinstance(image, dict):
