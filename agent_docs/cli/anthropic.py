@@ -29,6 +29,7 @@ from agent_docs.core.config import (
 )
 from agent_docs.core.logging import PipelineLogger
 from agent_docs.ingest import build_targets, process_target
+from agent_docs.ingest.discover import UndiscoveredTargetURLs
 from agent_docs.qa import run_qa
 from agent_docs.sinks import sync_to_feishu
 
@@ -99,7 +100,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--translate", dest="translate", action="store_true")
     parser.add_argument("--no-translate", dest="translate", action="store_false")
     parser.set_defaults(translate=True)
-    parser.add_argument("--translate-mode", choices=["auto", "command", "openai", "off"], default="auto")
+    parser.add_argument(
+        "--translate-mode",
+        choices=["auto", "command", "openai", "off"],
+        default="auto",
+        help="auto|command|openai translate English sources; off accepts the original language and does not require Chinese output.",
+    )
     parser.add_argument("--translate-timeout", type=int, default=DEFAULT_TRANSLATE_TIMEOUT)
 
     parser.add_argument("--execute-feishu", action="store_true", help="Actually run lark-cli commands")
@@ -133,13 +139,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         dest="target_urls",
         action="append",
         default=None,
-        help="Limit crawl targets to exact source URLs (repeatable).",
+        help="Limit crawl to these source URLs (repeatable). A URL that is not in the discovery set fails the run.",
     )
 
     parser.add_argument("--discover-only", action="store_true")
 
     args = parser.parse_args(argv)
     args.no_qa = args.no_qa or (not args.qa)
+    if args.translate_mode == "off":
+        args.translate = False
     return args
 
 
@@ -281,12 +289,31 @@ def run_pipeline(cfg: argparse.Namespace) -> Dict[str, object]:
     return summary
 
 
+def _missing_target_report(cfg: argparse.Namespace, exc: UndiscoveredTargetURLs) -> Dict[str, object]:
+    return {
+        "output_root": str(Path(cfg.output_root).resolve()),
+        "target_count": 0,
+        "batch_count": 0,
+        "overall_status": PIPELINE_OVERALL_STATUS_FAIL,
+        "failed_batches": [],
+        "errors": [f"target_url_not_discovered: {url}" for url in exc.missing],
+        "missing_target_urls": list(exc.missing),
+        "items": [],
+    }
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     cfg = parse_args(argv)
-    if cfg.discover_only or os.environ.get("ANTHROPIC_PIPELINE_DISCOVER_ONLY"):
-        print(json.dumps(discover_only(cfg), ensure_ascii=False, indent=2))
-        return
-    report = run_pipeline(cfg)
+    try:
+        if cfg.discover_only or os.environ.get("ANTHROPIC_PIPELINE_DISCOVER_ONLY"):
+            print(json.dumps(discover_only(cfg), ensure_ascii=False, indent=2))
+            return
+        report = run_pipeline(cfg)
+    except UndiscoveredTargetURLs as exc:
+        for url in exc.missing:
+            print(f"[ERROR] target_url_not_discovered: {url}", file=sys.stderr)
+        print(json.dumps(_missing_target_report(cfg, exc), ensure_ascii=False, indent=2))
+        sys.exit(1)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if report.get("overall_status") != PIPELINE_OVERALL_STATUS_PASS and not cfg.allow_failures:
         sys.exit(1)

@@ -24,6 +24,14 @@
 
 ## 已沉淀经验
 
+### 2026-11-20 — verify:qa 静默丢 URL，且 off 仍要求翻译
+
+**上下文**：`npm run anthropic:verify:qa` 作为日常矩阵验证。矩阵 6 条 URL，脚本固定 `--translate-mode off`。
+**现象**：退出码 1，`overall_status: FAIL`。两条英文新闻 `translate_missing`；`target_count` 为 5，`/engineering/building-effective-agents` 没有跑到。
+**根因**：`need_translate` 只看 `cfg.translate`（默认 true），不看 `translate_mode=off`，QA 仍要求中文。`--target-url` 只过滤已发现 URL，发现集里没有的条目被丢掉且不报错。该工程文现已 301 到 `/research/building-effective-agents`，sitemap 只收录规范 URL。
+**解法**：`off` / `--no-translate` 时 `need_translate=false`，英文原文不再报 `translate_missing`；`auto` 未译出中文仍然失败。未发现的 `--target-url` 以 `target_url_not_discovered` 直接 exit 1（`--allow-failures` 不能放过）。矩阵改为 research 规范 URL。
+**预防**：改发现过滤或翻译开关时跑 `tests/test_target_urls.py` 与 `tests/test_process_target.py::TestTranslateMode`。不要为了让 verify 变绿而删掉仍有效的 URL。
+
 ### 2026-05-22 — /goal Phase 0-4 验证被环境变量阻塞
 
 **上下文**：执行 `docs/CODEX_GOAL.md` 验收链路，要求跑到 Phase 4 并产出 `feishu_sync_report` PASS。
