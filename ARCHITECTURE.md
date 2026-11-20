@@ -503,3 +503,4 @@ batch-001/
 
 - 行为变更 → 更新本文 + 必要时 `DEBUG.md` / `EXPERIENCE.md`
 - 用户可见命令变更 → 同步 `README.md` 与 `AGENTS.md` 速查表
+- 架构决策（WHY）→ `docs/adr/`（ADR 索引见 [docs/adr/README.md](./docs/adr/README.md)；Accepted ADR 描述目标态，实现可能尚未完全落地）
