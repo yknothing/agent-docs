@@ -22,9 +22,10 @@
 flowchart LR
   P0[Phase 0 discover] --> P1[Phase 1 smoke]
   P1 --> P2[Phase 2 single + QA]
-  P2 --> P3[Phase 3 batch + QA]
+  P2 --> P3[Phase 3 verify:qa]
   P3 --> P4[Phase 4 translate 可选]
   P4 --> DONE[Stage 1 mainline PASS]
+  P3 -.->|release only| STRESS[Full crawl stress/prod]
 ```
 
 | Phase | 动作 | 工具命令 | 门禁 |
@@ -32,7 +33,7 @@ flowchart LR
 | 0 | 发现 URL 范围 | `npm run anthropic:discover` | `discover.json` 合理 |
 | 1 | Smoke（无 QA/翻译） | `npm run anthropic:crawl:smoke` | `pipeline_summary` PASS |
 | 2 | 单篇 + QA | `--max-items 1 --batch-size 1` | `batch_qa_report` PASS |
-| 3 | 小批 + QA | `--batch-size 5`（或 5–10） | 每批 QA PASS |
+| 3 | 代表性矩阵 + QA | `npm run anthropic:verify:qa` | 每批 QA PASS |
 | 4 | 启用翻译（需要时） | `--translate-mode auto` | QA PASS；API 限流监控 |
 
 ### Phase 0 — Discover
@@ -70,17 +71,32 @@ python3 scripts/anthropic_content_pipeline.py \
 
 **Skill 介入点**：`content-quality-gate` — 抽样对比 `source.md` 与 `final.zh.md`，确认结构保真、术语保留。
 
-### Phase 3 — Batch + QA
+### Phase 3 — Representative matrix + QA（日常/post-ingest 验证）
 
 ```bash
-python3 scripts/anthropic_content_pipeline.py \
-  --batch-size 5 \
-  --output-root artifacts/anthropic-content \
-  --translate-mode off
-# 或续跑：--resume-output
+npm run anthropic:verify:qa
+# 检查 artifacts/anthropic-content-verify/batch-*/batch_qa_report.json
 ```
 
+矩阵 URL 见 `scripts/verify_matrix_urls.txt`（platform doc、engineering 文章、带图 news、code docs 等 ~6 条；`--batch-size 5`；QA 默认开启；独立 output root）。
+
+若 output root 已有 `batch-*` 目录，需先清理 `artifacts/anthropic-content-verify/` 再跑，避免与旧产物混批。
+
 失败时 **Skill 介入点**：`qa-triage` — 读 `batch_qa_report.json` + `pipeline.log`，分类修复或请求用户授权 `--allow-failures`。
+
+### Full crawl — 生产交付 / 手动压测（非日常 smoke/QA）
+
+**不要**用 `npm run anthropic:crawl` 做日常 E2E 或改 ingest 后的常规验证；日常金字塔为：`lint:py` / `test:py` → `anthropic:crawl:smoke` → `anthropic:verify:qa`。
+
+仅在 **生产全量交付** 或 **发布前手动容量/压力测试** 时使用：
+
+```bash
+npm run anthropic:discover
+npm run anthropic:crawl:smoke
+npm run anthropic:verify:qa   # 先确认矩阵 QA PASS
+npm run anthropic:crawl       # 全量；batch-size 20；output: artifacts/anthropic-content
+# 续跑：--resume-output
+```
 
 ### Phase 4 — Translation（可选，按需）
 
