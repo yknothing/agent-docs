@@ -305,6 +305,8 @@ npm 脚本是唯一推荐入口；Agent 应优先 `npm run feishu:*` 而非直�
 
 `--discover-only` 写出 `{output_root}/discover.json`，不抓取正文。
 
+`--target-url`（可重复）只保留发现结果中的 URL。比较时忽略大小写 host、末尾斜杠和 query/fragment；路径不同视为不同页面。任一请求 URL 不在发现集中时，流水线直接 `FAIL`（`target_url_not_discovered`，exit 1），不会静默丢掉后继续。`--allow-failures` 不能跳过这一前置失败。
+
 #### 2.2 单篇处理 `process_target`
 
 对每条 URL：
@@ -438,7 +440,8 @@ agent-docs/                          ← FEISHU_DOC_FOLDER_TOKEN（文件夹名�
 | `--max-items` | 0 | 限制条数（smoke） |
 | `--output-root` | `artifacts/anthropic-content` | 产物根 |
 | `--resume-output` | false | 允许写入已有 batch 目录 |
-| `--translate-mode` | auto | auto \| command \| openai \| off |
+| `--translate-mode` | auto | auto \| command \| openai \| off。`off` 与 `--no-translate` 都表示本轮不翻译，英文源 `need_translate=false`，不因 `translate_missing` 失败。`auto`/`command`/`openai` 未产出中文时仍失败 |
+| `--target-url` | 无 | 只抓这些已发现 URL；未发现则 `target_url_not_discovered` 并 exit 1 |
 | `--no-qa` | false | 跳过 QA |
 | `--commit` / `--force-commit` | false | git 提交 |
 | `--sync-feishu` / `--execute-feishu` | false | 飞书同步 |

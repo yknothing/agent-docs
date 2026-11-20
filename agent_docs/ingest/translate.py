@@ -36,12 +36,23 @@ def build_translate_prompt(title: str, source_url: str, text: str) -> str:
     )
 
 
+def translation_enabled(cfg: argparse.Namespace) -> bool:
+    """Whether this run must translate English sources.
+
+    ``--translate-mode off`` and ``--no-translate`` both disable translation.
+    QA then must not report ``translate_missing`` for English pages: the run
+    explicitly accepted the original language. ``auto`` / ``command`` /
+    ``openai`` still require a Chinese result when the source is English.
+    """
+    if not getattr(cfg, "translate", True):
+        return False
+    return getattr(cfg, "translate_mode", "auto") != "off"
+
+
 def call_translator(text: str, title: str, source_url: str, cfg: argparse.Namespace) -> Tuple[str, str]:
-    mode = cfg.translate_mode
-    if not cfg.translate:
+    mode = getattr(cfg, "translate_mode", "auto")
+    if not translation_enabled(cfg):
         return text, "skipped(translate-disabled)"
-    if mode == "off":
-        return text, "skipped(no-translator)"
     if mode == "auto":
         if os.environ.get("LANGCRAFT_CMD"):
             mode = "command"

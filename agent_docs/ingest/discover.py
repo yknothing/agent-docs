@@ -79,6 +79,37 @@ def discover_news_urls(
     return sorted(set(out))
 
 
+class UndiscoveredTargetURLs(Exception):
+    """Raised when a requested ``--target-url`` is not in the discovery set.
+
+    The crawl must not continue with a partial set: a missing URL is a failed
+    run, not a silent filter miss.
+    """
+
+    def __init__(self, missing: Sequence[str]) -> None:
+        self.missing = [str(url) for url in missing]
+        super().__init__("target_url_not_discovered: " + ", ".join(self.missing))
+
+
+def canonical_source_url(url: str) -> str:
+    """Compare key for discovered and requested URLs.
+
+    Lowercases scheme and host, strips a trailing slash, and drops query and
+    fragment. The path itself is unchanged, so a relocated article does not
+    match its old path.
+    """
+    parsed = urllib.parse.urlparse(url.strip())
+    path = re.sub(r"/+$", "", parsed.path)
+    return urllib.parse.urlunparse((
+        (parsed.scheme or "").lower(),
+        (parsed.netloc or "").lower(),
+        path,
+        "",
+        "",
+        "",
+    ))
+
+
 def build_targets(cfg: argparse.Namespace) -> List[Dict[str, str]]:
     targets: List[Dict[str, str]] = []
     if cfg.include_platform_docs:
@@ -90,11 +121,20 @@ def build_targets(cfg: argparse.Namespace) -> List[Dict[str, str]]:
     if cfg.include_news:
         for u in discover_news_urls(allowed_prefixes=cfg.allowed_news_prefixes):
             targets.append({"source_type": "anthropic_news", "source_url": u, "seed_url": SITEMAP_URL})
-    if getattr(cfg, "target_urls", None):
-        target_urls = [str(u).strip() for u in cfg.target_urls if str(u).strip()]
-        if target_urls:
-            target_set = set(target_urls)
-            targets = [t for t in targets if t["source_url"] in target_set]
+    requested = [str(u).strip() for u in (getattr(cfg, "target_urls", None) or []) if str(u).strip()]
+    if requested:
+        discovered_keys = {canonical_source_url(t["source_url"]) for t in targets}
+        missing: List[str] = []
+        seen_missing = set()
+        for url in requested:
+            key = canonical_source_url(url)
+            if key not in discovered_keys and key not in seen_missing:
+                seen_missing.add(key)
+                missing.append(url)
+        if missing:
+            raise UndiscoveredTargetURLs(missing)
+        requested_keys = {canonical_source_url(url) for url in requested}
+        targets = [t for t in targets if canonical_source_url(t["source_url"]) in requested_keys]
     seen = set()
     unique = []
     for t in targets:

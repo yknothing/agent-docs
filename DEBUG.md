@@ -163,7 +163,8 @@ python3 scripts/anthropic_content_pipeline.py --resume-output --output-root arti
 | `image_download_failed` | 图片 HTTP 失败 | 网络、防盗链、URL 失效 |
 | `image_file_missing` | images.json 有记录但文件不存在 | 磁盘/路径问题 |
 | `image_not_localized` | 正文未引用 `media/` | `process_target` 替换逻辑 |
-| `translate_missing` | 需要翻译但未产出中文 | 配置翻译器 |
+| `translate_missing` | 翻译已开启（`translate_mode` 不是 `off`）但未产出中文 | 配置 `LANGCRAFT_CMD` / `OPENAI_API_KEY`，或明确改用 `--translate-mode off`（英文原文可接受，不再要求译文） |
+| `target_url_not_discovered` | `--target-url` 不在本次发现集中，流水线未开抓 | 改用 sitemap / llms.txt 中的规范 URL；旧路径 301 到新路径时不会被当成同一条 |
 | `zh_output_language_check_failed` | final.zh 中文占比不足 | 翻译质量或源已是英文壳 |
 
 ### 症状：翻译相关 QA 全失败
@@ -176,8 +177,8 @@ echo "${OPENAI_API_KEY:+set}"
 ```
 
 - 设 `LANGCRAFT_CMD` 或 `OPENAI_API_KEY`
-- smoke 可先 `--translate-mode off`（`anthropic:crawl:smoke` 已默认 off）
-- 全量需翻译：确认 `translate_mode` 非 off
+- smoke 可先 `--translate-mode off`（`anthropic:crawl:smoke` 已默认 off；`anthropic:verify:qa` 同样用 off，英文页不做翻译门禁）
+- 全量需翻译：确认 `translate_mode` 非 off。off 时不应再出现 `translate_missing`；若仍出现，是 `need_translate` 没跟上 `translate_mode`
 
 ### 症状：discover 条数异常
 

@@ -10,6 +10,9 @@ if [[ ! -f "$URL_FILE" ]]; then
   exit 1
 fi
 
+# Daily verification does not require translator credentials.
+# --translate-mode off accepts English originals: QA must not emit
+# translate_missing for those pages. auto/command/openai still require Chinese.
 cmd=(python3 "${REPO_ROOT}/scripts/anthropic_content_pipeline.py"
   --batch-size 5
   --output-root "$OUTPUT_ROOT"
@@ -30,5 +33,5 @@ if [[ "$url_count" -eq 0 ]]; then
   exit 1
 fi
 
-echo "[INFO] anthropic:verify:qa — ${url_count} URLs, batch-size 5, QA enabled -> ${OUTPUT_ROOT}"
+echo "[INFO] anthropic:verify:qa — ${url_count} URLs, batch-size 5, translate-mode off, QA enabled -> ${OUTPUT_ROOT}"
 exec "${cmd[@]}"

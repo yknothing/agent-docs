@@ -41,7 +41,7 @@ from agent_docs.ingest.normalize import (
     safe_slug,
     visible_content_len,
 )
-from agent_docs.ingest.translate import call_translator, pick_preferred_source_url
+from agent_docs.ingest.translate import call_translator, pick_preferred_source_url, translation_enabled
 
 
 def process_target(
@@ -147,7 +147,7 @@ def process_target(
                 )
     raw_markdown_local_images = rewrite_image_links(raw_markdown, images)
 
-    need_translate = source_lang == "en" and cfg.translate
+    need_translate = source_lang == "en" and translation_enabled(cfg)
     if need_translate:
         translated_markdown, translator_note = call_translator(raw_markdown_local_images, title, source_url, cfg)
     else:
